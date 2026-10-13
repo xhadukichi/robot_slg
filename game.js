@@ -1201,10 +1201,14 @@
 
     const cursorX = (cursor.x - camera.x) * TILE_SIZE;
     const cursorY = (cursor.y - camera.y) * TILE_SIZE;
-    ctx.strokeStyle = '#f1d978';
+    const cursorColor = enemyRangePreview?.mode === 'attack' &&
+      enemyRangePreview.target?.x === cursor.x && enemyRangePreview.target?.y === cursor.y
+      ? '#f04444'
+      : '#f1d978';
+    ctx.strokeStyle = cursorColor;
     ctx.lineWidth = 4;
     ctx.strokeRect(cursorX + 4, cursorY + 4, TILE_SIZE - 8, TILE_SIZE - 8);
-    ctx.fillStyle = '#f1d978';
+    ctx.fillStyle = cursorColor;
     ctx.fillRect(cursorX + 4, cursorY + 4, 12, 4);
     ctx.fillRect(cursorX + 4, cursorY + 4, 4, 12);
     ctx.fillRect(cursorX + TILE_SIZE - 16, cursorY + 4, 12, 4);
