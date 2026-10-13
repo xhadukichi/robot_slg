@@ -558,7 +558,7 @@
           await wait(350);
           selectedUnit = enemy;
           rangeMode = 'attack';
-          enemyRangePreview = { unit: enemy, mode: 'attack' };
+          enemyRangePreview = { unit: enemy, mode: 'attack', target: attackTarget };
           draw();
           await wait(300);
           await tryAttackTarget(attackTarget);
@@ -1143,10 +1143,24 @@
     for (const unit of units) {
       const unitX = unit.visualX ?? unit.x;
       const unitY = unit.visualY ?? unit.y;
+      const screenX = (unitX - camera.x) * TILE_SIZE + (unit.visualOffsetX ?? 0);
+      const screenY = (unitY - camera.y) * TILE_SIZE + (unit.visualOffsetY ?? 0);
       if (unit.image.complete && unit.image.naturalWidth > 0 &&
           unitX >= camera.x && unitX < camera.x + VIEW_WIDTH &&
           unitY >= camera.y && unitY < camera.y + VIEW_HEIGHT) {
-        ctx.drawImage(unit.image, (unitX - camera.x) * TILE_SIZE + (unit.visualOffsetX ?? 0), (unitY - camera.y) * TILE_SIZE + (unit.visualOffsetY ?? 0), TILE_SIZE, TILE_SIZE);
+        ctx.drawImage(unit.image, screenX, screenY, TILE_SIZE, TILE_SIZE);
+      }
+      if (enemyRangePreview?.mode === 'attack' && unit === enemyRangePreview.target &&
+          unitX >= camera.x && unitX < camera.x + VIEW_WIDTH &&
+          unitY >= camera.y && unitY < camera.y + VIEW_HEIGHT) {
+        ctx.save();
+        ctx.strokeStyle = '#fff3a6';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(screenX + 3, screenY + 3, TILE_SIZE - 6, TILE_SIZE - 6);
+        ctx.strokeStyle = '#c62828';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(screenX + 7, screenY + 7, TILE_SIZE - 14, TILE_SIZE - 14);
+        ctx.restore();
       }
     }
 
