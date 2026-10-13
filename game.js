@@ -42,19 +42,23 @@
   const cameraTarget = { x: 0, y: 0 };
   let cameraFrame = 0;
   const units = [
-    { id: 'PC01', side: 'player', x: 2, y: 8, hp: 10, maxHp: 10, moveRange: 5, attackRange: 5, attackPower: 3, evasion: 5, hitBonus: 2, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
-    { id: 'PC02', side: 'player', x: 2, y: 4, hp: 12, maxHp: 12, moveRange: 4, attackRange: 4, attackPower: 5, evasion: 4, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
-    { id: 'PC03', side: 'player', x: 1, y: 11, hp: 20, maxHp: 20, moveRange: 4, attackRange: 5, attackPower: 6, evasion: 1, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
-    { id: 'EN01', side: 'enemy', x: 12, y: 9, hp: 15, maxHp: 15, moveRange: 5, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
-    { id: 'EN02', side: 'enemy', x: 14, y: 11, hp: 13, maxHp: 13, moveRange: 4, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
+    { id: 'PC01', side: 'player', x: 3, y: 9, hp: 10, maxHp: 10, moveRange: 5, minAttackRange: 1, attackRange: 5, attackPower: 3, evasion: 5, hitBonus: 2, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
+    { id: 'PC02', side: 'player', x: 3, y: 5, hp: 12, maxHp: 12, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 4, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
+    { id: 'PC03', side: 'player', x: 2, y: 12, hp: 25, maxHp: 25, moveRange: 4, minAttackRange: 2, attackRange: 6, attackPower: 6, evasion: 0, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
+    { id: 'EN01', side: 'enemy', x: 13, y: 10, hp: 15, maxHp: 15, moveRange: 5, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
+    { id: 'EN02', side: 'enemy', x: 15, y: 12, hp: 13, maxHp: 13, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
   ];
   const obstacles = [
-    { id: 'OBJ01', x: 7, y: 7, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ02', x: 6, y: 6, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ03', x: 9, y: 9, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ04', x: 11, y: 9, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ05', x: 4, y: 8, imageFile: 'obstacles_02.png', image: new Image() },
-    { id: 'OBJ06', x: 4, y: 9, imageFile: 'obstacles_02.png', image: new Image() },
+    { id: 'OBJ01', x: 8, y: 8, imageFile: 'obstacles_01.png', image: new Image() },
+    { id: 'OBJ02', x: 7, y: 7, imageFile: 'obstacles_01.png', image: new Image() },
+    { id: 'OBJ03', x: 10, y: 10, imageFile: 'obstacles_01.png', image: new Image() },
+    { id: 'OBJ04', x: 12, y: 10, imageFile: 'obstacles_01.png', image: new Image() },
+    { id: 'OBJ05', x: 5, y: 9, imageFile: 'obstacles_02.png', image: new Image() },
+    { id: 'OBJ06', x: 5, y: 10, imageFile: 'obstacles_02.png', image: new Image() },
+    { id: 'OBJ07', x: 8, y: 11, imageFile: 'obstacles_01.png', image: new Image() },
+    { id: 'OBJ10', x: 13, y: 9, imageFile: 'obstacles_01.png', image: new Image() },
+    { id: 'OBJ08', x: 6, y: 11, imageFile: 'obstacles_02.png', image: new Image() },
+    { id: 'OBJ09', x: 8, y: 12, imageFile: 'obstacles_02.png', image: new Image() },
   ];
   let currentSide = 'player';
   const sideTurnCounts = { player: 1, enemy: 1 };
@@ -103,7 +107,7 @@
       cursor.x = Math.max(0, Math.min(MAP_SIZE - 1, mapX));
       cursor.y = Math.max(0, Math.min(MAP_SIZE - 1, mapY));
       const distance = selectedUnit ? Math.abs(mapX - selectedUnit.x) + Math.abs(mapY - selectedUnit.y) : Infinity;
-      if (distance > (selectedUnit?.attackRange ?? 0)) {
+      if (!selectedUnit || !isWithinAttackRange(selectedUnit, distance)) {
         if (pendingMove?.unit === selectedUnit) rollbackPendingMove();
         else rangeMode = null;
       } else if (clickedUnit) {
@@ -259,7 +263,7 @@
     unitStatus.innerHTML = `<div class="status-title">${unit.id} <span class="status-side">${unit.side === 'player' ? 'PC' : 'EN'}</span></div>
       <div>HP：${unit.hp} / ${unit.maxHp}</div>
       <div>移動力：${unit.moveRange}</div>
-      <div>射程：${unit.attackRange}</div>
+      <div>射程：${unit.minAttackRange === unit.attackRange ? unit.attackRange : `${unit.minAttackRange}～${unit.attackRange}`}</div>
       <div>攻撃力：${unit.attackPower}</div>
       <div>回避：${unit.evasion}</div>
       <div>命中補正：${unit.hitBonus}</div>`;
@@ -590,7 +594,7 @@
 
   function findOpponentInRange(unit) {
     return units
-      .filter((candidate) => candidate.side !== unit.side && manhattanDistance(unit, candidate) <= unit.attackRange)
+      .filter((candidate) => candidate.side !== unit.side && isWithinAttackRange(unit, manhattanDistance(unit, candidate)))
       .sort((a, b) => manhattanDistance(unit, a) - manhattanDistance(unit, b))[0] ?? null;
   }
 
@@ -598,19 +602,31 @@
     return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
   }
 
+  function isWithinAttackRange(unit, distance) {
+    return distance >= unit.minAttackRange && distance <= unit.attackRange;
+  }
+
   function chooseApproachTile(unit, target) {
     const distances = getMoveDistances(unit);
     const candidates = [...distances.entries()]
       .map(([key, distance]) => {
         const [x, y] = key.split(',').map(Number);
-        return { x, y, distance, remaining: Math.abs(x - target.x) + Math.abs(y - target.y) };
+        const targetDistance = Math.abs(x - target.x) + Math.abs(y - target.y);
+        const remaining = targetDistance < unit.minAttackRange
+          ? unit.minAttackRange - targetDistance
+          : targetDistance > unit.attackRange ? targetDistance - unit.attackRange : 0;
+        return { x, y, distance, remaining };
       })
       .filter((tile) => tile.distance > 0 && tile.distance <= unit.moveRange &&
         !isObstacleAt(tile.x, tile.y) &&
         !units.some((occupant) => occupant !== unit && occupant.x === tile.x && occupant.y === tile.y))
       .sort((a, b) => a.remaining - b.remaining || a.distance - b.distance);
     const best = candidates[0];
-    if (!best || best.remaining >= manhattanDistance(unit, target)) return null;
+    const currentDistance = manhattanDistance(unit, target);
+    const currentRemaining = currentDistance < unit.minAttackRange
+      ? unit.minAttackRange - currentDistance
+      : currentDistance > unit.attackRange ? currentDistance - unit.attackRange : 0;
+    if (!best || best.remaining >= currentRemaining) return null;
     return best;
   }
 
@@ -650,7 +666,7 @@
   async function tryAttackTarget(target) {
     if (!selectedUnit || rangeMode !== 'attack' || target.side === selectedUnit.side) return false;
     const distance = Math.abs(target.x - selectedUnit.x) + Math.abs(target.y - selectedUnit.y);
-    if (distance > selectedUnit.attackRange) return false;
+    if (!isWithinAttackRange(selectedUnit, distance)) return false;
 
     const attacker = selectedUnit;
     isCombatResolving = true;
@@ -838,7 +854,7 @@
     if (unit.side !== currentSide || unit.ended || unit.attackUsed) return false;
     const targetInRange = units.some((target) =>
       target.side !== unit.side &&
-      Math.abs(target.x - unit.x) + Math.abs(target.y - unit.y) <= unit.attackRange
+      isWithinAttackRange(unit, Math.abs(target.x - unit.x) + Math.abs(target.y - unit.y))
     );
     if (!targetInRange) return false;
 
@@ -1069,8 +1085,8 @@
         ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
         const occupiedByOther = isObstacleAt(mapX, mapY) || units.some((unit) => unit !== selectedUnit && unit.x === mapX && unit.y === mapY);
         const inMoveRange = moveDistances?.has(`${mapX},${mapY}`) && !occupiedByOther;
-        const inAttackRange = rangeMode === 'attack' && selectedUnit &&
-          Math.abs(mapX - selectedUnit.x) + Math.abs(mapY - selectedUnit.y) <= selectedUnit.attackRange;
+        const attackDistance = selectedUnit ? Math.abs(mapX - selectedUnit.x) + Math.abs(mapY - selectedUnit.y) : 0;
+        const inAttackRange = rangeMode === 'attack' && selectedUnit && isWithinAttackRange(selectedUnit, attackDistance);
         if (inMoveRange || inAttackRange) {
           ctx.fillStyle = inAttackRange
             ? 'rgba(237, 112, 91, 0.54)'
