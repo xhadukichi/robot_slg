@@ -69,6 +69,7 @@
   const sideTurnCounts = { player: 1, enemy: 1 };
   let selectedUnit = null;
   let rangeMode = null;
+  let enemyRangePreview = null;
   let isUnitMoving = false;
   let menuSelectionIndex = 0;
   let attackMessageTimer = 0;
@@ -532,7 +533,12 @@
           const destination = chooseApproachTile(enemy, target);
           if (destination) {
             enemy.moveUsed = true;
+            enemyRangePreview = { unit: enemy, mode: 'move' };
+            draw();
+            await wait(450);
             await new Promise((resolve) => animateUnitMove(enemy, getMovePath(enemy, destination.x, destination.y), resolve));
+            enemyRangePreview = null;
+            draw();
             cursor.x = target.x;
             cursor.y = target.y;
             scrollToCursor();
@@ -552,6 +558,9 @@
           await wait(350);
           selectedUnit = enemy;
           rangeMode = 'attack';
+          enemyRangePreview = { unit: enemy, mode: 'attack' };
+          draw();
+          await wait(300);
           await tryAttackTarget(attackTarget);
           await wait(300);
         }
@@ -586,6 +595,7 @@
     isEnemyAiRunning = false;
     selectedUnit = null;
     rangeMode = null;
+    enemyRangePreview = null;
     unitCommand.hidden = true;
     unitStatus.hidden = true;
     draw();
@@ -683,7 +693,16 @@
     try {
       attackMessage.hidden = true;
       await jumpUnit(attacker);
-      await playSe(getAttackSe(attacker));
+      const attackSound = playSe(getAttackSe(attacker));
+      if (attacker.side === 'enemy') {
+        window.setTimeout(() => {
+          if (enemyRangePreview?.unit === attacker && enemyRangePreview.mode === 'attack') {
+            enemyRangePreview = null;
+            draw();
+          }
+        }, 500);
+      }
+      await attackSound;
 
       const roll = Math.floor(Math.random() * 10);
       const hitMargin = roll - target.evasion + attacker.hitBonus;
@@ -1076,7 +1095,13 @@
   }
 
   function draw() {
-    const moveDistances = rangeMode === 'move' && selectedUnit ? getMoveDistances(selectedUnit) : null;
+    const moveRangeUnit = enemyRangePreview?.mode === 'move'
+      ? enemyRangePreview.unit
+      : rangeMode === 'move' ? selectedUnit : null;
+    const attackRangeUnit = enemyRangePreview?.mode === 'attack'
+      ? enemyRangePreview.unit
+      : rangeMode === 'attack' ? selectedUnit : null;
+    const moveDistances = moveRangeUnit ? getMoveDistances(moveRangeUnit) : null;
 
     ctx.clearRect(0, 0, VIEW_PIXEL_WIDTH, VIEW_PIXEL_HEIGHT);
     const firstMapX = Math.floor(camera.x);
@@ -1088,14 +1113,15 @@
         const screenY = (mapY - camera.y) * TILE_SIZE;
         ctx.fillStyle = tileColor(mapX, mapY);
         ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-        const occupiedByOther = isObstacleAt(mapX, mapY) || units.some((unit) => unit !== selectedUnit && unit.x === mapX && unit.y === mapY);
-        const inMoveRange = moveDistances?.has(`${mapX},${mapY}`) && !occupiedByOther;
-        const attackDistance = selectedUnit ? Math.abs(mapX - selectedUnit.x) + Math.abs(mapY - selectedUnit.y) : 0;
-        const inAttackRange = rangeMode === 'attack' && selectedUnit && isWithinAttackRange(selectedUnit, attackDistance);
+        const occupiedByOther = isObstacleAt(mapX, mapY) || units.some((unit) => unit !== moveRangeUnit && unit.x === mapX && unit.y === mapY);
+        const moveDistance = moveDistances?.get(`${mapX},${mapY}`);
+        const inMoveRange = moveRangeUnit && moveDistance > 0 && !occupiedByOther;
+        const attackDistance = attackRangeUnit ? Math.abs(mapX - attackRangeUnit.x) + Math.abs(mapY - attackRangeUnit.y) : 0;
+        const inAttackRange = attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance);
         if (inMoveRange || inAttackRange) {
           ctx.fillStyle = inAttackRange
             ? 'rgba(237, 112, 91, 0.54)'
-            : selectedUnit.side === 'enemy' ? 'rgba(108, 174, 244, 0.52)' : 'rgba(227, 231, 154, 0.48)';
+            : moveRangeUnit.side === 'enemy' ? 'rgba(108, 174, 244, 0.52)' : 'rgba(227, 231, 154, 0.48)';
           ctx.fillRect(screenX + 2, screenY + 2, TILE_SIZE - 4, TILE_SIZE - 4);
         }
         ctx.strokeStyle = '#1d2c23';
