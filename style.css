@@ -1,0 +1,369 @@
+:root {
+  color-scheme: dark;
+  font-family: "Yu Gothic UI", Meiryo, sans-serif;
+  background: #111714;
+  color: #e6eee8;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(ellipse at 50% -15%, rgba(102, 147, 111, .16), transparent 55%),
+    #111714;
+}
+
+.audio-start-screen {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #000;
+  color: #fff;
+  font: 500 clamp(18px, 3vw, 30px) Consolas, monospace;
+  letter-spacing: .04em;
+  cursor: pointer;
+  transition: color 1000ms ease, background-color 2000ms ease;
+}
+.audio-start-screen:hover { color: #e7e7e7; }
+.audio-start-screen.fade-text { color: transparent; cursor: default; }
+.audio-start-screen.reveal { background-color: transparent; }
+.audio-start-screen:focus-visible { outline: 2px solid #fff; outline-offset: -8px; }
+.audio-start-screen[hidden] { display: none; }
+
+.title-screen {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  overflow: hidden;
+  background: #090c0d;
+  opacity: 1;
+  transition: opacity 700ms ease;
+}
+.title-screen[hidden] { display: none; }
+.title-screen.fade-out { opacity: 0; pointer-events: none; }
+.title-background, .title-shade {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.title-background {
+  object-fit: cover;
+  object-position: center;
+  opacity: 1;
+}
+.title-shade {
+  background: linear-gradient(90deg, transparent 28%, rgba(8, 12, 15, .12) 48%, rgba(8, 12, 15, .68) 100%);
+}
+.title-menu {
+  position: absolute;
+  top: 50%;
+  right: clamp(24px, 7vw, 112px);
+  width: min(48vw, 620px);
+  transform: translateY(-50%);
+  color: #fff5de;
+  text-shadow: 0 3px 14px #000, 0 1px 3px #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms ease;
+}
+.title-screen.menu-visible .title-menu { opacity: 1; pointer-events: auto; }
+.intro-event {
+  position: fixed;
+  z-index: 25;
+  inset: 0;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: #000;
+}
+.intro-event[hidden] { display: none; }
+.intro-event > img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.story-window {
+  position: absolute;
+  z-index: 1;
+  right: clamp(16px, 5vw, 72px);
+  bottom: clamp(16px, 4vh, 40px);
+  left: clamp(16px, 5vw, 72px);
+  display: flex;
+  max-height: min(46vh, 390px);
+  flex-direction: column;
+  padding: clamp(14px, 2.4vw, 28px) clamp(16px, 3vw, 36px) 12px;
+  border: 1px solid rgba(219, 224, 226, .62);
+  border-radius: 5px;
+  background: linear-gradient(120deg, rgba(8, 13, 18, .92), rgba(12, 20, 26, .78));
+  box-shadow: 0 8px 32px #0009, inset 0 0 22px #ffffff0a;
+  color: #fff;
+  text-align: left;
+}
+.story-text {
+  overflow-y: auto;
+  min-height: 0;
+  color: #f4f1e8;
+  font: 500 clamp(14px, 1.65vw, 20px)/1.8 "Yu Gothic UI", Meiryo, sans-serif;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-color: #b3a77b #20282b;
+}
+.story-start {
+  align-self: flex-end;
+  margin-top: 8px;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: #ffe5a3;
+  font: 700 clamp(16px, 1.8vw, 22px) "Yu Gothic UI", Meiryo, sans-serif;
+  letter-spacing: .08em;
+  text-shadow: 0 2px 8px #000;
+  cursor: pointer;
+}
+.story-start:disabled { visibility: hidden; }
+.story-start:not(:disabled) { animation: story-start-blink 1s steps(2, start) infinite; }
+.story-start:focus-visible { outline: 2px solid #ffe5a3; outline-offset: 3px; }
+@keyframes story-start-blink { to { opacity: .35; } }
+.title-menu h1 {
+  margin: 0 0 clamp(28px, 5vh, 52px);
+  color: #fff0ce;
+  font-size: clamp(26px, 3.1vw, 42px);
+  font-weight: 800;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+.title-options { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
+.title-options button {
+  position: relative;
+  min-width: min(100%, 330px);
+  padding: 12px 20px 12px 28px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #f2e9d6;
+  font: 700 clamp(16px, 2vw, 23px) "Yu Gothic UI", Meiryo, sans-serif;
+  letter-spacing: .05em;
+  text-align: left;
+  text-shadow: inherit;
+  cursor: pointer;
+}
+.title-options button.selected {
+  border-color: rgba(240, 209, 139, .7);
+  background: rgba(18, 23, 27, .68);
+  color: #ffe2a5;
+  box-shadow: 0 4px 20px #0005;
+}
+.title-options button.selected::before {
+  position: absolute;
+  left: 9px;
+  content: "▶";
+  color: #f4c56b;
+}
+.title-options button:focus-visible { outline: 2px solid #ffe2a5; outline-offset: 2px; }
+
+.game-shell {
+  width: min(100% - 40px, 1080px);
+  margin: 0 auto;
+  padding: 24px 0 28px;
+}
+
+.game-header, .status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.game-header { margin-bottom: 16px; }
+.eyebrow {
+  margin: 0 0 5px;
+  color: #91aa98;
+  font: 500 10px Consolas, monospace;
+  letter-spacing: .2em;
+}
+h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
+.help { margin: 0; color: #9eaaa1; font-size: 12px; }
+
+.map-frame {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #37463b;
+  border-radius: 5px;
+  background: #25382e;
+  box-shadow: 0 18px 60px #0005, 0 0 0 5px #1a231d;
+}
+
+.unit-command {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 132px;
+  overflow: hidden;
+  border: 1px solid #f1d978;
+  border-radius: 4px;
+  background: #202b22;
+  box-shadow: 0 4px 14px #0008;
+}
+.unit-command[hidden] { display: none; }
+.unit-command button {
+  padding: 7px 12px;
+  border: 0;
+  background: transparent;
+  color: #f1d978;
+  font: 600 14px "Yu Gothic UI", Meiryo, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.unit-command button + button { border-top: 1px solid #485343; }
+.unit-command button:disabled { opacity: .58; cursor: default; }
+.unit-command button:hover, .unit-command button:focus-visible {
+  background: #f1d978;
+  color: #202b22;
+  outline: none;
+}
+.unit-command button:disabled:hover { background: transparent; color: #f1d978; }
+
+.unit-status {
+  position: absolute;
+  z-index: 2;
+  min-width: 176px;
+  padding: 10px 12px;
+  border: 1px solid #8ca18c;
+  border-radius: 4px;
+  background: #1b2821f2;
+  color: #e6eee8;
+  font: 12px/1.65 Consolas, "Yu Gothic UI", Meiryo, monospace;
+  box-shadow: 0 4px 14px #0008;
+  pointer-events: none;
+}
+.unit-status[hidden] { display: none; }
+.unit-status .status-title {
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #536353;
+  color: #f1d978;
+  font-weight: 700;
+}
+.unit-status .status-side { color: #a9b9ab; }
+.unit-command button.selected {
+  background: #f1d978;
+  color: #202b22;
+}
+
+.attack-message {
+  position: absolute;
+  z-index: 3;
+  top: 16px;
+  left: 50%;
+  padding: 10px 22px;
+  transform: translateX(-50%);
+  border: 1px solid #ffb096;
+  border-radius: 4px;
+  background: #542d2aee;
+  color: #ffe2b2;
+  font: 800 22px Consolas, monospace;
+  letter-spacing: .06em;
+  text-shadow: 0 2px 8px #000;
+  box-shadow: 0 5px 18px #0008;
+  pointer-events: none;
+}
+.attack-message[hidden] { display: none; }
+
+.phase-announcement {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 50%;
+  padding: 13px 30px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #d5dfa8;
+  border-radius: 5px;
+  background: #1d2d25ed;
+  color: #edf0bd;
+  font: 800 24px "Yu Gothic UI", Meiryo, sans-serif;
+  letter-spacing: .08em;
+  text-shadow: 0 2px 8px #000;
+  box-shadow: 0 8px 28px #0009;
+  pointer-events: none;
+}
+.phase-announcement[hidden] { display: none; }
+
+.game-result {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #0b100dc9;
+  color: #f3df8a;
+  font: 800 clamp(32px, 7vw, 72px) "Yu Gothic UI", Meiryo, sans-serif;
+  letter-spacing: .12em;
+  text-shadow: 0 4px 18px #000;
+}
+.game-result[hidden] { display: none; }
+
+.turn-confirm {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  min-width: 290px;
+  padding: 20px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #c4d0bd;
+  border-radius: 6px;
+  background: #1a241eeF;
+  text-align: center;
+  box-shadow: 0 10px 36px #000b;
+}
+.turn-confirm[hidden] { display: none; }
+.turn-confirm p { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
+.turn-confirm div { display: flex; justify-content: center; gap: 10px; }
+.turn-confirm button {
+  padding: 7px 16px;
+  border: 1px solid #637261;
+  border-radius: 4px;
+  background: #29392e;
+  color: #e6eee8;
+  font: 600 13px "Yu Gothic UI", Meiryo, sans-serif;
+  cursor: pointer;
+}
+.turn-confirm button.selected, .turn-confirm button:hover { border-color: #f1d978; color: #f1d978; }
+.status #phase-label { color: #d4e0d1; }
+
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  outline: none;
+  image-rendering: pixelated;
+}
+canvas:focus-visible { box-shadow: inset 0 0 0 3px #e3cb75; }
+
+.status {
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 14px 4px 0;
+  color: #95a198;
+  font: 11px Consolas, monospace;
+  letter-spacing: .06em;
+}
+.status strong { color: #e9d783; font-weight: 500; }
+.map-size { margin-left: auto; color: #78877d; }
+
+@media (max-width: 600px) {
+  .title-background { object-position: 38% center; }
+  .title-shade { background: linear-gradient(90deg, transparent 0%, rgba(8, 12, 15, .25) 30%, rgba(8, 12, 15, .82) 100%); }
+  .title-menu { right: 18px; width: 58vw; }
+  .title-menu h1 { white-space: normal; font-size: clamp(24px, 7vw, 38px); }
+  .title-options button { min-width: 100%; padding-left: 26px; font-size: clamp(14px, 4vw, 18px); }
+  .game-shell { width: min(100% - 24px, 1080px); padding-top: 16px; }
+  .help { max-width: 145px; text-align: right; line-height: 1.5; }
+}
