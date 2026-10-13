@@ -318,7 +318,7 @@ h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
   bottom: clamp(22px, 6vh, 56px);
   left: 0;
   color: #fff4bd;
-  content: "\300aClick to Next\300b";
+  content: "\300a Click to Next\300b";
   font: 700 clamp(16px, 2.4vw, 24px) Consolas, "Yu Gothic UI", Meiryo, sans-serif;
   letter-spacing: .04em;
   opacity: 0;
