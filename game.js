@@ -37,9 +37,14 @@
   let titleOpening = false;
   let titleIntroComplete = false;
 
-  const cursor = { x: 0, y: 0 };
-  const camera = { x: 0, y: 0 };
-  const cameraTarget = { x: 0, y: 0 };
+  const startCursor = { x: 10, y: 10 };
+  const cursor = { ...startCursor };
+  const initialCamera = {
+    x: Math.max(0, Math.min(MAP_SIZE - VIEW_WIDTH, startCursor.x - Math.floor(VIEW_WIDTH / 2))),
+    y: Math.max(0, Math.min(MAP_SIZE - VIEW_HEIGHT, startCursor.y - Math.floor(VIEW_HEIGHT / 2))),
+  };
+  const camera = { ...initialCamera };
+  const cameraTarget = { ...initialCamera };
   let cameraFrame = 0;
   const units = [
     { id: 'PC01', side: 'player', x: 3, y: 9, hp: 10, maxHp: 10, moveRange: 5, minAttackRange: 1, attackRange: 5, attackPower: 3, evasion: 5, hitBonus: 2, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
