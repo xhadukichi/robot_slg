@@ -19,6 +19,8 @@
   const audioStartScreen = document.querySelector('#audio-start-screen');
   const titleScreen = document.querySelector('#title-screen');
   const introEvent = document.querySelector('#intro-event');
+  const introEventImage = introEvent.querySelector('img');
+  const introImageSource = introEventImage.getAttribute('src');
   const storyText = document.querySelector('#story-text');
   const storyStart = document.querySelector('#story-start');
   const gameShell = document.querySelector('.game-shell');
@@ -36,6 +38,9 @@
   let titleTransitioning = false;
   let titleOpening = false;
   let titleIntroComplete = false;
+  let clearPromptReady = false;
+  let clearTransitioning = false;
+  let isClearStory = false;
 
   const startCursor = { x: 10, y: 10 };
   const cursor = { ...startCursor };
@@ -364,7 +369,15 @@
     if (button.dataset.titleAction === 'new') startNewGame();
   });
 
-  storyStart.addEventListener('click', enterStage);
+  gameResult.addEventListener('click', () => {
+    if (clearPromptReady && !clearTransitioning) showClearStory();
+  });
+
+  window.addEventListener('keydown', (event) => {
+    if (!clearPromptReady || clearTransitioning) return;
+    event.preventDefault();
+    showClearStory();
+  });
 
   window.addEventListener('keydown', (event) => {
     if (titleScreen.hidden) return;
@@ -398,6 +411,9 @@
   async function startNewGame() {
     if (titleTransitioning) return;
     titleTransitioning = true;
+    isClearStory = false;
+    introEventImage.src = introImageSource;
+    storyStart.textContent = '\u300aGame Start\u300b';
     titleScreen.classList.add('fade-out');
     fadeOutBgm();
     await Promise.all([playSe('shot_pc1.mp3'), wait(750)]);
@@ -417,6 +433,52 @@
     }
     storyStart.disabled = false;
   }
+
+  async function playClearStory() {
+    isClearStory = true;
+    introEventImage.src = 'Unit/Event_01_ED.png';
+    storyStart.textContent = '\u300aClick to Top\u300b';
+    storyText.textContent = '';
+    storyStart.disabled = true;
+    const story = '\u300e\u30b5\u30f3\u30d7\u30eb\u300f\n\u30ed\u30dc\u30c3\u30c8\u8ecd\u56e3\u3092\u6483\u7834\u3057\u305f\u30d2\u30ed\u30a4\u30f3\u305f\u3061\u3002\n\u3057\u3070\u3057\u306e\u4f11\u606f\u3092\u3068\u308b\u3002\n\u3060\u304c\u30ed\u30dc\u30c3\u30c8\u8ecd\u56e3\u306e\u6b21\u306e\u9b54\u306e\u624b\u304c\u8feb\u3063\u3066\u3044\u305f\u2026\u2026';
+    for (const character of Array.from(story)) {
+      storyText.textContent += character;
+      storyText.scrollTop = storyText.scrollHeight;
+      await wait(32);
+    }
+    storyStart.disabled = false;
+  }
+
+  async function showClearStory() {
+    clearTransitioning = true;
+    gameResult.classList.add('fade-out');
+    await wait(700);
+    gameShell.hidden = true;
+    gameResult.hidden = true;
+    introEvent.hidden = false;
+    playClearStory();
+  }
+
+  async function returnToTitle() {
+    introEvent.classList.add('fade-out');
+    await wait(700);
+    introEvent.hidden = true;
+    introEvent.classList.remove('fade-out');
+    isClearStory = false;
+    titleScreen.hidden = false;
+    titleScreen.classList.remove('fade-out');
+    titleScreen.classList.add('menu-visible');
+    titleTransitioning = false;
+    titleIntroComplete = true;
+    clearTransitioning = false;
+    clearPromptReady = false;
+    setBgm('M001_Title.mp3');
+  }
+
+  storyStart.addEventListener('click', () => {
+    if (isClearStory) returnToTitle();
+    else enterStage();
+  });
 
   function enterStage() {
     introEvent.hidden = true;
@@ -856,7 +918,16 @@
     turnConfirm.hidden = true;
     rangeMode = null;
     gameResult.textContent = message;
+    gameResult.classList.remove('fade-out', 'show-next');
     gameResult.hidden = false;
+    if (message === '\u30b9\u30c6\u30fc\u30b8\u30af\u30ea\u30a2') {
+      clearPromptReady = false;
+      window.setTimeout(() => {
+        if (gameResult.hidden) return;
+        clearPromptReady = true;
+        gameResult.classList.add('show-next');
+      }, 4000);
+    }
   }
 
   function moveSelectedUnitTo(x, y) {
