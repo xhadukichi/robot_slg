@@ -14,6 +14,8 @@
   const attackMessage = document.querySelector('#attack-message');
   const phaseAnnouncement = document.querySelector('#phase-announcement');
   const gameResult = document.querySelector('#game-result');
+  const touchControls = document.querySelector('#touch-controls');
+  const cancelActionButton = document.querySelector('#cancel-action');
   const phaseLabel = document.querySelector('#phase-label');
   const turnConfirm = document.querySelector('#turn-confirm');
   const audioStartScreen = document.querySelector('#audio-start-screen');
@@ -172,6 +174,14 @@
     } else {
       cancelCurrentAction();
     }
+  });
+
+  cancelActionButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    if (isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || isGameOver) return;
+    if (!turnConfirm.hidden) answerTurnConfirmation(false);
+    else cancelCurrentAction();
+    draw();
   });
 
   unitCommand.addEventListener('click', (event) => {
@@ -526,6 +536,7 @@
     emptyCommand.hidden = true;
     updateTurnConfirmSelection();
     canvas.focus();
+    draw();
   }
 
   function updateTurnConfirmSelection() {
@@ -538,6 +549,7 @@
     turnConfirm.hidden = true;
     if (!yes) {
       canvas.focus();
+      draw();
       return;
     }
 
@@ -966,6 +978,7 @@
     if (!emptyCommand.hidden) {
       emptyCommand.hidden = true;
       canvas.focus();
+      draw();
       return;
     }
     if (!unitStatus.hidden) {
@@ -1295,6 +1308,8 @@
     }
     if (!unitStatus.hidden && selectedUnit) positionPanel(unitStatus, selectedUnit);
     if (!emptyCommand.hidden) positionPanel(emptyCommand, cursor);
+    touchControls.hidden = isGameOver ||
+      (emptyCommand.hidden && unitCommand.hidden && unitStatus.hidden && turnConfirm.hidden && !rangeMode);
   }
 
   function positionPanel(panel, unit) {
