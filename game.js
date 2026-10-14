@@ -213,9 +213,10 @@
     }
 
     if (rangeMode === 'move') {
-      const distance = selectedUnit ? getMoveDistances(selectedUnit).get(`${mapX},${mapY}`) : undefined;
-      const occupied = isObstacleAt(mapX, mapY) || units.some((unit) => unit !== selectedUnit && unit.x === mapX && unit.y === mapY);
-      if (clickedUnit || distance === undefined || distance > (selectedUnit?.moveRange ?? 0) || occupied) {
+      const moveDistances = selectedUnit ? getMoveDistances(selectedUnit) : new Map();
+      const destination = selectedUnit ? getMoveAnchorForCell(selectedUnit, mapX, mapY, moveDistances) : null;
+      if (clickedUnit === selectedUnit && !destination) return;
+      if ((clickedUnit && clickedUnit !== selectedUnit) || !destination) {
         rangeMode = null;
         unitCommand.hidden = true;
         cursor.x = Math.max(0, Math.min(MAP_SIZE - 1, mapX));
@@ -223,7 +224,7 @@
         scrollToCursor();
         return;
       }
-      moveSelectedUnitTo(mapX, mapY);
+      moveSelectedUnitTo(destination.x, destination.y);
     }
 
     if (clickedObstacle) {
@@ -903,8 +904,7 @@
         return { x, y, distance, remaining };
       })
       .filter((tile) => tile.distance > 0 && tile.distance <= unit.moveRange &&
-        !isObstacleAt(tile.x, tile.y) &&
-        !units.some((occupant) => occupant !== unit && occupant.x === tile.x && occupant.y === tile.y))
+        !isUnitPositionBlocked(unit, tile.x, tile.y))
       .sort((a, b) => a.remaining - b.remaining || a.distance - b.distance);
     const best = candidates[0];
     const currentDistance = manhattanDistance(unit, target);
@@ -1166,8 +1166,7 @@
   function moveSelectedUnitTo(x, y) {
     if (!selectedUnit || rangeMode !== 'move') return;
     const distance = getMoveDistances(selectedUnit).get(`${x},${y}`);
-    const occupied = isObstacleAt(x, y) || units.some((unit) => unit !== selectedUnit && unit.x === x && unit.y === y);
-    if (distance === undefined || distance > selectedUnit.moveRange || occupied) return;
+    if (distance === undefined || distance > selectedUnit.moveRange || isUnitPositionBlocked(selectedUnit, x, y)) return;
     const path = getMovePath(selectedUnit, x, y);
     if (path.length < 2) return;
     pendingMove = { unit: selectedUnit, x: selectedUnit.x, y: selectedUnit.y };
@@ -1288,10 +1287,7 @@
         const nextKey = key(x, y);
         if (x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE || distances.has(nextKey)) continue;
 
-        if (isObstacleAt(x, y)) continue;
-        const occupant = units.find((unit) => unit.x === x && unit.y === y);
-        // Opposing units block movement; allies can be crossed but not occupied as a destination.
-        if (occupant && occupant.side !== movingUnit.side) continue;
+        if (isUnitPositionBlocked(movingUnit, x, y)) continue;
         distances.set(nextKey, nextDistance);
         queue.push({ x, y });
       }
@@ -1313,9 +1309,7 @@
         const y = current.y + dy;
         const nextKey = key(x, y);
         if (x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE || previous.has(nextKey)) continue;
-        if (isObstacleAt(x, y)) continue;
-        const occupant = units.find((unit) => unit.x === x && unit.y === y);
-        if (occupant && occupant.side !== movingUnit.side) continue;
+        if (isUnitPositionBlocked(movingUnit, x, y)) continue;
         previous.set(nextKey, key(current.x, current.y));
         queue.push({ x, y });
       }
@@ -1333,6 +1327,60 @@
     }
     if (stepKey !== null || path[0]?.x !== movingUnit.x || path[0]?.y !== movingUnit.y) return [];
     return path;
+  }
+
+  function getFootprintSize(unit) {
+    return {
+      width: Math.ceil((unit.spriteWidth ?? TILE_SIZE) / TILE_SIZE),
+      height: Math.ceil((unit.spriteHeight ?? TILE_SIZE) / TILE_SIZE),
+    };
+  }
+
+  function isUnitPositionBlocked(unit, x, y) {
+    const { width, height } = getFootprintSize(unit);
+    if (x < 0 || y < 0 || x + width > MAP_SIZE || y + height > MAP_SIZE) return true;
+    const overlaps = (otherX, otherY, otherWidth, otherHeight) =>
+      x < otherX + otherWidth && x + width > otherX &&
+      y < otherY + otherHeight && y + height > otherY;
+    if (obstacles.some((obstacle) => overlaps(obstacle.x, obstacle.y, 1, 1))) return true;
+    return units.some((other) => {
+      if (other === unit) return false;
+      const otherSize = getFootprintSize(other);
+      return overlaps(other.x, other.y, otherSize.width, otherSize.height);
+    });
+  }
+
+  function getMoveRangeTiles(unit, distances) {
+    const tiles = new Set();
+    const footprint = getFootprintSize(unit);
+    for (const [position, distance] of distances) {
+      if (distance === 0 || distance > unit.moveRange) continue;
+      const [x, y] = position.split(',').map(Number);
+      for (let offsetY = 0; offsetY < footprint.height; offsetY++) {
+        for (let offsetX = 0; offsetX < footprint.width; offsetX++) {
+          tiles.add(`${x + offsetX},${y + offsetY}`);
+        }
+      }
+    }
+    return tiles;
+  }
+
+  function getMoveAnchorForCell(unit, cellX, cellY, distances) {
+    const clickedPosition = `${cellX},${cellY}`;
+    const exactDistance = distances.get(clickedPosition);
+    if (exactDistance > 0 && exactDistance <= unit.moveRange) return { x: cellX, y: cellY };
+
+    const footprint = getFootprintSize(unit);
+    const candidates = [];
+    for (const [position, distance] of distances) {
+      if (distance === 0 || distance > unit.moveRange) continue;
+      const [x, y] = position.split(',').map(Number);
+      if (cellX >= x && cellX < x + footprint.width && cellY >= y && cellY < y + footprint.height) {
+        candidates.push({ x, y, distance, clickDistance: Math.abs(cellX - x) + Math.abs(cellY - y) });
+      }
+    }
+    candidates.sort((a, b) => a.distance - b.distance || a.clickDistance - b.clickDistance || a.y - b.y || a.x - b.x);
+    return candidates[0] ?? null;
   }
 
   function isObstacleAt(x, y) {
@@ -1485,6 +1533,7 @@
       ? enemyRangePreview.unit
       : rangeMode === 'attack' ? selectedUnit : null;
     const moveDistances = moveRangeUnit ? getMoveDistances(moveRangeUnit) : null;
+    const moveRangeTiles = moveRangeUnit ? getMoveRangeTiles(moveRangeUnit, moveDistances) : null;
 
     ctx.clearRect(0, 0, VIEW_PIXEL_WIDTH, VIEW_PIXEL_HEIGHT);
     const firstMapX = Math.floor(camera.x);
@@ -1496,9 +1545,7 @@
         const screenY = (mapY - camera.y) * TILE_SIZE;
         ctx.fillStyle = tileColor(mapX, mapY);
         ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-        const occupiedByOther = isObstacleAt(mapX, mapY) || units.some((unit) => unit !== moveRangeUnit && unit.x === mapX && unit.y === mapY);
-        const moveDistance = moveDistances?.get(`${mapX},${mapY}`);
-        const inMoveRange = moveRangeUnit && moveDistance > 0 && !occupiedByOther;
+        const inMoveRange = moveRangeTiles?.has(`${mapX},${mapY}`);
         const attackDistance = attackRangeUnit ? Math.abs(mapX - attackRangeUnit.x) + Math.abs(mapY - attackRangeUnit.y) : 0;
         const inAttackRange = attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance);
         if (inMoveRange || inAttackRange) {
