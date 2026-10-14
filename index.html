@@ -48,7 +48,14 @@
         </div>
         <div id="attack-message" class="attack-message" role="status" aria-live="polite" hidden>Atack!</div>
         <div id="phase-announcement" class="phase-announcement" role="status" aria-live="polite" hidden></div>
-        <div id="game-result" class="game-result" role="alert" aria-live="assertive" hidden></div>
+        <div id="game-result" class="game-result" role="alert" aria-live="assertive" hidden>
+          <div id="game-result-message" class="game-result-message"></div>
+          <div id="game-over-options" class="game-over-options" hidden>
+            <button type="button" data-game-over-action="retry">Try Again</button>
+            <button type="button" data-game-over-action="load" disabled>Load Data</button>
+            <button type="button" data-game-over-action="top">Turn to Top Menu</button>
+          </div>
+        </div>
         <div id="turn-confirm" class="turn-confirm" role="dialog" aria-modal="true" hidden>
           <p>ターン終了を宣言しますか？</p>
           <div>

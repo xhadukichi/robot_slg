@@ -14,6 +14,8 @@
   const attackMessage = document.querySelector('#attack-message');
   const phaseAnnouncement = document.querySelector('#phase-announcement');
   const gameResult = document.querySelector('#game-result');
+  const gameResultMessage = document.querySelector('#game-result-message');
+  const gameOverOptions = document.querySelector('#game-over-options');
   const touchControls = document.querySelector('#touch-controls');
   const cancelActionButton = document.querySelector('#cancel-action');
   const phaseLabel = document.querySelector('#phase-label');
@@ -43,6 +45,8 @@
   let clearPromptReady = false;
   let clearTransitioning = false;
   let isClearStory = false;
+  let gameOverOptionsReady = false;
+  let gameOverSelection = 0;
 
   const startCursor = { x: 10, y: 10 };
   const cursor = { ...startCursor };
@@ -60,6 +64,7 @@
     { id: 'EN01', side: 'enemy', x: 13, y: 10, hp: 15, maxHp: 15, moveRange: 5, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
     { id: 'EN02', side: 'enemy', x: 15, y: 12, hp: 13, maxHp: 13, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
   ];
+  const initialUnits = units.map((unit) => ({ ...unit }));
   const obstacles = [
     { id: 'OBJ01', x: 8, y: 8, imageFile: 'obstacles_01.png', image: new Image() },
     { id: 'OBJ02', x: 7, y: 7, imageFile: 'obstacles_01.png', image: new Image() },
@@ -72,6 +77,7 @@
     { id: 'OBJ08', x: 6, y: 11, imageFile: 'obstacles_02.png', image: new Image() },
     { id: 'OBJ09', x: 8, y: 12, imageFile: 'obstacles_02.png', image: new Image() },
   ];
+  const initialObstacles = obstacles.map((obstacle) => ({ ...obstacle }));
   let currentSide = 'player';
   const sideTurnCounts = { player: 1, enemy: 1 };
   let selectedUnit = null;
@@ -379,11 +385,30 @@
     if (button.dataset.titleAction === 'new') startNewGame();
   });
 
-  gameResult.addEventListener('click', () => {
+  gameResult.addEventListener('click', (event) => {
+    const option = event.target.closest('[data-game-over-action]');
+    if (option && gameOverOptionsReady && !clearTransitioning) {
+      chooseGameOverAction(option.dataset.gameOverAction);
+      return;
+    }
     if (clearPromptReady && !clearTransitioning) showClearStory();
   });
 
   window.addEventListener('keydown', (event) => {
+    if (gameOverOptionsReady && !clearTransitioning) {
+      const buttons = [...gameOverOptions.querySelectorAll('button:not(:disabled)')];
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        gameOverSelection = (gameOverSelection + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+        updateGameOverSelection();
+        return;
+      }
+      if (event.key === 'Enter' || event.key === ' ' || event.key.toLowerCase() === 'x') {
+        event.preventDefault();
+        chooseGameOverAction(buttons[gameOverSelection]?.dataset.gameOverAction);
+        return;
+      }
+    }
     if (!clearPromptReady || clearTransitioning) return;
     event.preventDefault();
     showClearStory();
@@ -469,20 +494,115 @@
     playClearStory();
   }
 
+  function updateGameOverSelection() {
+    [...gameOverOptions.querySelectorAll('button:not(:disabled)')].forEach((button, index) => {
+      button.classList.toggle('selected', index === gameOverSelection);
+    });
+  }
+
+  function chooseGameOverAction(action) {
+    if (action === 'retry') retryStage();
+    else if (action === 'top') returnToTopMenuFromGameOver();
+  }
+
+  async function retryStage() {
+    if (!gameOverOptionsReady || clearTransitioning) return;
+    clearTransitioning = true;
+    gameResult.classList.add('fade-out');
+    await wait(700);
+    gameShell.hidden = true;
+    gameResult.hidden = true;
+    resetStageState();
+    introEventImage.src = introImageSource;
+    storyStart.textContent = '\u300aGame Start\u300b';
+    introEvent.hidden = false;
+    clearTransitioning = false;
+    playIntroStory();
+  }
+
+  async function returnToTopMenuFromGameOver() {
+    if (!gameOverOptionsReady || clearTransitioning) return;
+    clearTransitioning = true;
+    gameResult.classList.add('fade-out');
+    await wait(700);
+    gameShell.hidden = true;
+    gameResult.hidden = true;
+    resetStageState();
+    showTitleMenu();
+  }
+
+  function showTitleMenu() {
+    introEvent.hidden = true;
+    introEvent.classList.remove('fade-out');
+    titleScreen.hidden = false;
+    titleScreen.classList.remove('fade-out');
+    titleScreen.classList.add('menu-visible');
+    titleSelection = 0;
+    updateTitleSelection();
+    titleTransitioning = false;
+    titleIntroComplete = true;
+    clearTransitioning = false;
+    clearPromptReady = false;
+    isClearStory = false;
+    setBgm('M001_Title.mp3');
+  }
+
+  function resetStageState() {
+    window.clearTimeout(attackMessageTimer);
+    window.clearTimeout(phaseAnnouncementTimer);
+    if (cameraFrame) cancelAnimationFrame(cameraFrame);
+    cameraFrame = 0;
+    units.splice(0, units.length, ...initialUnits.map((unit) => ({ ...unit })));
+    obstacles.splice(0, obstacles.length, ...initialObstacles.map((obstacle) => ({ ...obstacle })));
+    currentSide = 'player';
+    sideTurnCounts.player = 1;
+    sideTurnCounts.enemy = 1;
+    selectedUnit = null;
+    rangeMode = null;
+    enemyRangePreview = null;
+    isUnitMoving = false;
+    menuSelectionIndex = 0;
+    turnConfirmSelection = 0;
+    statusFromCommand = false;
+    isGameOver = false;
+    pendingGameResult = '';
+    isEnemyAiRunning = false;
+    isCombatResolving = false;
+    pendingMove = null;
+    phaseInputLocked = false;
+    clearPromptReady = false;
+    clearTransitioning = false;
+    gameOverOptionsReady = false;
+    gameOverSelection = 0;
+    explosionEffects.length = 0;
+    cursor.x = startCursor.x;
+    cursor.y = startCursor.y;
+    camera.x = initialCamera.x;
+    camera.y = initialCamera.y;
+    cameraTarget.x = initialCamera.x;
+    cameraTarget.y = initialCamera.y;
+    unitCommand.hidden = true;
+    unitStatus.hidden = true;
+    emptyCommand.hidden = true;
+    turnConfirm.hidden = true;
+    phaseAnnouncement.hidden = true;
+    attackMessage.hidden = true;
+    touchControls.hidden = true;
+    gameResult.hidden = true;
+    gameResultMessage.textContent = '';
+    gameOverOptions.hidden = true;
+    gameResult.classList.remove('fade-out', 'show-next', 'show-game-over-options');
+    updatePhaseLabel();
+    draw();
+  }
+
   async function returnToTitle() {
     introEvent.classList.add('fade-out');
     await wait(700);
     introEvent.hidden = true;
     introEvent.classList.remove('fade-out');
-    isClearStory = false;
-    titleScreen.hidden = false;
-    titleScreen.classList.remove('fade-out');
-    titleScreen.classList.add('menu-visible');
-    titleTransitioning = false;
-    titleIntroComplete = true;
-    clearTransitioning = false;
-    clearPromptReady = false;
-    setBgm('M001_Title.mp3');
+    resetStageState();
+    showTitleMenu();
   }
 
   storyStart.addEventListener('click', () => {
@@ -929,8 +1049,10 @@
     emptyCommand.hidden = true;
     turnConfirm.hidden = true;
     rangeMode = null;
-    gameResult.textContent = message;
-    gameResult.classList.remove('fade-out', 'show-next');
+    gameResultMessage.textContent = message;
+    gameOverOptions.hidden = true;
+    gameOverOptionsReady = false;
+    gameResult.classList.remove('fade-out', 'show-next', 'show-game-over-options');
     gameResult.hidden = false;
     if (message === '\u30b9\u30c6\u30fc\u30b8\u30af\u30ea\u30a2') {
       clearPromptReady = false;
@@ -939,6 +1061,15 @@
         clearPromptReady = true;
         gameResult.classList.add('show-next');
       }, 4000);
+    } else if (message === '\u30b2\u30fc\u30e0\u30aa\u30fc\u30d0\u30fc') {
+      window.setTimeout(() => {
+        if (gameResult.hidden || !isGameOver) return;
+        gameOverOptionsReady = true;
+        gameOverSelection = 0;
+        gameOverOptions.hidden = false;
+        gameResult.classList.add('show-game-over-options');
+        updateGameOverSelection();
+      }, 3500);
     }
   }
 
