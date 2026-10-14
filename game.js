@@ -969,6 +969,7 @@
       const roll = Math.floor(Math.random() * 10);
       const hitMargin = roll - target.evasion + attacker.hitBonus;
       if (hitMargin >= 1) {
+        const previousHp = target.hp;
         target.hp -= attacker.attackPower;
         const defeated = target.hp <= 0;
         if (defeated) {
@@ -979,6 +980,7 @@
         }
 
         await shakeUnit(target);
+        await animateHpCountdown(target, previousHp, target.hp);
         if (defeated) {
           const explosionDone = startExplosion(target);
           units.splice(units.indexOf(target), 1);
@@ -995,7 +997,19 @@
       return true;
     } finally {
       isCombatResolving = false;
+      draw();
     }
+  }
+
+  async function animateHpCountdown(unit, startingHp, finalHp) {
+    unit.hpDisplayOverride = startingHp;
+    draw();
+    for (let hp = startingHp - 1; hp >= finalHp; hp--) {
+      await wait(100);
+      unit.hpDisplayOverride = hp;
+      draw();
+    }
+    delete unit.hpDisplayOverride;
   }
 
   function getAttackSe(unit) {
@@ -1511,22 +1525,23 @@
           unitY >= camera.y && unitY < camera.y + VIEW_HEIGHT) {
         ctx.drawImage(unit.image, screenX, screenY, TILE_SIZE, TILE_SIZE);
       }
-      if (!isUnitMoving && !isCombatResolving &&
+      if (!isUnitMoving && (!isCombatResolving || unit.hpDisplayOverride !== undefined) &&
           unitX >= camera.x && unitX < camera.x + VIEW_WIDTH &&
           unitY >= camera.y && unitY < camera.y + VIEW_HEIGHT) {
         const hpBadgeX = screenX + TILE_SIZE / 2 - 16;
         const hpBadgeY = screenY + TILE_SIZE - 20;
+        const visibleHp = unit.hpDisplayOverride ?? unit.hp;
         ctx.save();
         ctx.fillStyle = '#101510e8';
         ctx.fillRect(hpBadgeX, hpBadgeY, 32, 17);
         ctx.strokeStyle = '#d6d2a4';
         ctx.lineWidth = 1;
         ctx.strokeRect(hpBadgeX + 0.5, hpBadgeY + 0.5, 31, 16);
-        ctx.fillStyle = unit.hp / unit.maxHp <= 0.3 ? '#ff7770' : '#fff4d0';
+        ctx.fillStyle = visibleHp / unit.maxHp <= 0.3 ? '#ff7770' : '#fff4d0';
         ctx.font = 'bold 13px Arial, "Yu Gothic UI", Meiryo, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(Math.max(0, Math.ceil(unit.hp))), screenX + TILE_SIZE / 2, hpBadgeY + 8.5);
+        ctx.fillText(String(Math.max(0, Math.ceil(visibleHp))), screenX + TILE_SIZE / 2, hpBadgeY + 8.5);
         ctx.restore();
       }
       if (enemyRangePreview?.mode === 'attack' && unit === enemyRangePreview.target &&
