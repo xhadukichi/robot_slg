@@ -323,8 +323,7 @@ h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
   position: absolute;
   z-index: 5;
   inset: 0;
-  display: grid;
-  place-items: center;
+  display: block;
   background: #0b100dc9;
   color: #f3df8a;
   font: 800 clamp(32px, 7vw, 72px) "Yu Gothic UI", Meiryo, sans-serif;
@@ -349,12 +348,24 @@ h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
 .game-result.show-next::after { opacity: 1; animation: story-start-blink 1s steps(2, start) infinite; }
 .game-result.fade-out { opacity: 0; transition: opacity 700ms ease; }
 .game-result.show-game-over-options {
+  display: grid;
   grid-template-rows: 1fr auto;
   gap: clamp(18px, 4vh, 36px);
   padding: 24px;
 }
 .game-result.show-game-over-options::after { content: none; }
-.game-result-message { align-self: end; text-align: center; }
+.game-result-message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+.game-result.show-game-over-options .game-result-message {
+  position: static;
+  display: block;
+  align-self: end;
+}
 .game-over-options {
   display: flex;
   width: min(100%, 340px);
