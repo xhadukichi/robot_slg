@@ -36,6 +36,8 @@
       </header>
       <section class="map-frame" aria-label="横20マス、縦20マスのマップ">
         <canvas id="map" width="1024" height="768" tabindex="0" aria-label="マップ。矢印キーまたはWASDでカーソルを移動できます"></canvas>
+        <div id="map-scrollbar-x" class="map-scrollbar map-scrollbar-x" role="scrollbar" aria-label="マップの左右スクロール" aria-orientation="horizontal" aria-valuemin="1" aria-valuemax="5" aria-valuenow="1" tabindex="0"><span></span></div>
+        <div id="map-scrollbar-y" class="map-scrollbar map-scrollbar-y" role="scrollbar" aria-label="マップの上下スクロール" aria-orientation="vertical" aria-valuemin="1" aria-valuemax="9" aria-valuenow="1" tabindex="0"><span></span></div>
         <div id="unit-command" class="unit-command" hidden>
           <button type="button" data-action="move">移動</button>
           <button type="button" data-action="attack">攻撃</button>

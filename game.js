@@ -7,6 +7,10 @@
   const VIEW_PIXEL_HEIGHT = TILE_SIZE * VIEW_HEIGHT;
   const canvas = document.querySelector('#map');
   const ctx = canvas.getContext('2d');
+  const mapScrollbars = {
+    x: document.querySelector('#map-scrollbar-x'),
+    y: document.querySelector('#map-scrollbar-y'),
+  };
   const coordinates = document.querySelector('#coordinates');
   const unitCommand = document.querySelector('#unit-command');
   const unitStatus = document.querySelector('#unit-status');
@@ -57,6 +61,8 @@
   const camera = { ...initialCamera };
   const cameraTarget = { ...initialCamera };
   let cameraFrame = 0;
+  let pointerGesture = null;
+  let lastGestureDragged = false;
   const units = [
     { id: 'PC01', side: 'player', x: 3, y: 9, hp: 10, maxHp: 10, moveRange: 5, minAttackRange: 1, attackRange: 5, attackPower: 3, evasion: 5, hitBonus: 2, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
     { id: 'PC02', side: 'player', x: 3, y: 5, hp: 12, maxHp: 12, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 4, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
@@ -105,7 +111,69 @@
   for (const obstacle of obstacles) obstacle.image.src = `Unit/${obstacle.imageFile}`;
   obstacles.forEach((obstacle) => obstacle.image.addEventListener('load', draw));
 
+  setupMapScrollbar(mapScrollbars.x, 'x');
+  setupMapScrollbar(mapScrollbars.y, 'y');
+
+  canvas.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    lastGestureDragged = false;
+    pointerGesture = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      cameraX: camera.x,
+      cameraY: camera.y,
+      dragging: false,
+    };
+  });
+
+  canvas.addEventListener('pointermove', (event) => {
+    if (!pointerGesture || event.pointerId !== pointerGesture.pointerId) return;
+    const bounds = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / bounds.width;
+    const scaleY = canvas.height / bounds.height;
+    const deltaX = event.clientX - pointerGesture.startX;
+    const deltaY = event.clientY - pointerGesture.startY;
+    if (!pointerGesture.dragging && Math.hypot(deltaX, deltaY) >= 7) {
+      pointerGesture.dragging = true;
+      canvas.setPointerCapture(event.pointerId);
+    }
+    if (!pointerGesture.dragging) return;
+    event.preventDefault();
+    lastGestureDragged = true;
+    setCameraPosition(
+      pointerGesture.cameraX - deltaX * scaleX / TILE_SIZE,
+      pointerGesture.cameraY - deltaY * scaleY / TILE_SIZE,
+    );
+  });
+
+  function finishPointerGesture(event) {
+    if (!pointerGesture || event.pointerId !== pointerGesture.pointerId) return;
+    lastGestureDragged = pointerGesture.dragging;
+    pointerGesture = null;
+  }
+  canvas.addEventListener('pointerup', finishPointerGesture);
+  canvas.addEventListener('pointercancel', finishPointerGesture);
+
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const bounds = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / bounds.width;
+    const scaleY = canvas.height / bounds.height;
+    const shiftHorizontal = event.shiftKey && event.deltaX === 0;
+    const horizontalDelta = shiftHorizontal ? event.deltaY : event.deltaX;
+    setCameraPosition(
+      camera.x + horizontalDelta * scaleX / TILE_SIZE,
+      camera.y + (shiftHorizontal ? 0 : event.deltaY) * scaleY / TILE_SIZE,
+    );
+  }, { passive: false });
+
   canvas.addEventListener('click', (event) => {
+    if (lastGestureDragged) {
+      lastGestureDragged = false;
+      event.preventDefault();
+      return;
+    }
     if (isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden) return;
     canvas.focus();
     emptyCommand.hidden = true;
@@ -1287,6 +1355,84 @@
     requestAnimationFrame(step);
   }
 
+  function setCameraPosition(x, y) {
+    if (cameraFrame) cancelAnimationFrame(cameraFrame);
+    cameraFrame = 0;
+    camera.x = Math.max(0, Math.min(MAP_SIZE - VIEW_WIDTH, x));
+    camera.y = Math.max(0, Math.min(MAP_SIZE - VIEW_HEIGHT, y));
+    cameraTarget.x = camera.x;
+    cameraTarget.y = camera.y;
+    draw();
+  }
+
+  function setupMapScrollbar(scrollbar, axis) {
+    const thumb = scrollbar.querySelector('span');
+    const isHorizontal = axis === 'x';
+    const maximum = isHorizontal ? MAP_SIZE - VIEW_WIDTH : MAP_SIZE - VIEW_HEIGHT;
+    let drag = null;
+
+    scrollbar.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const bounds = scrollbar.getBoundingClientRect();
+      const thumbBounds = thumb.getBoundingClientRect();
+      const trackStart = isHorizontal ? bounds.left : bounds.top;
+      const thumbStart = isHorizontal ? thumbBounds.left : thumbBounds.top;
+      const thumbLength = isHorizontal ? thumbBounds.width : thumbBounds.height;
+      const pointer = isHorizontal ? event.clientX : event.clientY;
+      const offset = event.target === thumb
+        ? pointer - thumbStart
+        : thumbLength / 2;
+      drag = { pointerId: event.pointerId, offset };
+      scrollbar.setPointerCapture(event.pointerId);
+      if (event.target !== thumb) moveThumb(pointer, bounds, thumbLength, offset, trackStart);
+    });
+
+    scrollbar.addEventListener('pointermove', (event) => {
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const bounds = scrollbar.getBoundingClientRect();
+      const thumbBounds = thumb.getBoundingClientRect();
+      moveThumb(
+        isHorizontal ? event.clientX : event.clientY,
+        bounds,
+        isHorizontal ? thumbBounds.width : thumbBounds.height,
+        drag.offset,
+        isHorizontal ? bounds.left : bounds.top,
+      );
+    });
+    const endDrag = (event) => {
+      if (drag?.pointerId === event.pointerId) drag = null;
+    };
+    scrollbar.addEventListener('pointerup', endDrag);
+    scrollbar.addEventListener('pointercancel', endDrag);
+
+    scrollbar.addEventListener('keydown', (event) => {
+      const current = isHorizontal ? camera.x : camera.y;
+      let next = current;
+      const previousKey = isHorizontal ? 'ArrowLeft' : 'ArrowUp';
+      const nextKey = isHorizontal ? 'ArrowRight' : 'ArrowDown';
+      if (event.key === previousKey) next -= 1;
+      else if (event.key === nextKey) next += 1;
+      else if (event.key === 'PageUp') next -= isHorizontal ? VIEW_WIDTH : VIEW_HEIGHT;
+      else if (event.key === 'PageDown') next += isHorizontal ? VIEW_WIDTH : VIEW_HEIGHT;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = maximum;
+      else return;
+      event.preventDefault();
+      setCameraPosition(isHorizontal ? next : camera.x, isHorizontal ? camera.y : next);
+    });
+
+    function moveThumb(pointer, bounds, thumbLength, offset, trackStart) {
+      const trackLength = isHorizontal ? bounds.width : bounds.height;
+      const travel = trackLength - thumbLength;
+      if (travel <= 0) return;
+      const position = Math.max(0, Math.min(travel, pointer - trackStart - offset));
+      const cameraPosition = (position / travel) * maximum;
+      setCameraPosition(isHorizontal ? cameraPosition : camera.x, isHorizontal ? camera.y : cameraPosition);
+    }
+  }
+
   function scrollToCursor() {
     cameraTarget.x = Math.max(0, Math.min(MAP_SIZE - VIEW_WIDTH, cursor.x - Math.floor(VIEW_WIDTH / 2)));
     cameraTarget.y = Math.max(0, Math.min(MAP_SIZE - VIEW_HEIGHT, cursor.y - Math.floor(VIEW_HEIGHT / 2)));
@@ -1439,6 +1585,18 @@
     }
     if (!unitStatus.hidden && selectedUnit) positionPanel(unitStatus, selectedUnit);
     if (!emptyCommand.hidden) positionPanel(emptyCommand, cursor);
+    const horizontalThumb = mapScrollbars.x.querySelector('span');
+    const verticalThumb = mapScrollbars.y.querySelector('span');
+    const horizontalSize = VIEW_WIDTH / MAP_SIZE;
+    const verticalSize = VIEW_HEIGHT / MAP_SIZE;
+    horizontalThumb.style.width = `${horizontalSize * 100}%`;
+    horizontalThumb.style.left = `${(camera.x / (MAP_SIZE - VIEW_WIDTH)) * (1 - horizontalSize) * 100}%`;
+    verticalThumb.style.height = `${verticalSize * 100}%`;
+    verticalThumb.style.top = `${(camera.y / (MAP_SIZE - VIEW_HEIGHT)) * (1 - verticalSize) * 100}%`;
+    mapScrollbars.x.setAttribute('aria-valuenow', String(Math.round(camera.x) + 1));
+    mapScrollbars.y.setAttribute('aria-valuenow', String(Math.round(camera.y) + 1));
+    mapScrollbars.x.setAttribute('aria-valuetext', `左端のマス ${Math.round(camera.x) + 1}`);
+    mapScrollbars.y.setAttribute('aria-valuetext', `上端のマス ${Math.round(camera.y) + 1}`);
     touchControls.hidden = isGameOver ||
       (emptyCommand.hidden && unitCommand.hidden && unitStatus.hidden && turnConfirm.hidden && !rangeMode);
   }
