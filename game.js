@@ -67,8 +67,8 @@
     { id: 'PC01', side: 'player', x: 3, y: 9, hp: 10, maxHp: 10, moveRange: 5, minAttackRange: 1, attackRange: 5, attackPower: 3, evasion: 5, hitBonus: 2, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
     { id: 'PC02', side: 'player', x: 3, y: 5, hp: 12, maxHp: 12, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 4, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
     { id: 'PC03', side: 'player', x: 2, y: 12, hp: 25, maxHp: 25, moveRange: 4, minAttackRange: 2, attackRange: 6, attackPower: 6, evasion: 0, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
-    { id: 'EN01', side: 'enemy', x: 13, y: 10, hp: 15, maxHp: 15, moveRange: 5, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
-    { id: 'EN02', side: 'enemy', x: 15, y: 12, hp: 13, maxHp: 13, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
+    { id: 'EN01', side: 'enemy', x: 13, y: 10, hp: 15, maxHp: 15, moveRange: 5, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, imageFile: 'EN02.png', spriteWidth: 128, spriteHeight: 128, image: new Image() },
+    { id: 'EN02', side: 'enemy', x: 15, y: 12, hp: 13, maxHp: 13, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, imageFile: 'EN03.png', spriteWidth: 128, spriteHeight: 64, image: new Image() },
   ];
   const initialUnits = units.map((unit) => ({ ...unit }));
   const obstacles = [
@@ -106,7 +106,10 @@
   const explosionEffects = [];
   explosionImage.src = 'Unit/Bomb_out.png';
   explosionImage.addEventListener('load', draw);
-  for (const unit of units) unit.image.src = `Unit/${unit.id}s.png`;
+  for (const unit of units) {
+    const imageFile = unit.imageFile ?? `${unit.id}s.png`;
+    unit.image.src = `Unit/${imageFile}`;
+  }
   units.forEach((unit) => unit.image.addEventListener('load', draw));
   for (const obstacle of obstacles) obstacle.image.src = `Unit/${obstacle.imageFile}`;
   obstacles.forEach((obstacle) => obstacle.image.addEventListener('load', draw));
@@ -183,7 +186,12 @@
     const mapX = Math.floor(camera.x + ((event.clientX - bounds.left) * scaleX) / TILE_SIZE);
     const mapY = Math.floor(camera.y + ((event.clientY - bounds.top) * scaleY) / TILE_SIZE);
 
-    const clickedUnit = units.find((unit) => unit.x === mapX && unit.y === mapY);
+    const clickedUnit = [...units].reverse().find((unit) => {
+      const widthInTiles = (unit.spriteWidth ?? TILE_SIZE) / TILE_SIZE;
+      const heightInTiles = (unit.spriteHeight ?? TILE_SIZE) / TILE_SIZE;
+      return mapX >= unit.x && mapX < unit.x + widthInTiles &&
+        mapY >= unit.y && mapY < unit.y + heightInTiles;
+    });
     const clickedObstacle = obstacles.find((obstacle) => obstacle.x === mapX && obstacle.y === mapY);
     const clickedDuringAction = rangeMode !== null;
     if (rangeMode === 'attack') {
@@ -1518,18 +1526,20 @@
     for (const unit of units) {
       const unitX = unit.visualX ?? unit.x;
       const unitY = unit.visualY ?? unit.y;
+      const spriteWidth = unit.spriteWidth ?? TILE_SIZE;
+      const spriteHeight = unit.spriteHeight ?? TILE_SIZE;
       const screenX = (unitX - camera.x) * TILE_SIZE + (unit.visualOffsetX ?? 0);
       const screenY = (unitY - camera.y) * TILE_SIZE + (unit.visualOffsetY ?? 0);
       if (unit.image.complete && unit.image.naturalWidth > 0 &&
-          unitX >= camera.x && unitX < camera.x + VIEW_WIDTH &&
-          unitY >= camera.y && unitY < camera.y + VIEW_HEIGHT) {
-        ctx.drawImage(unit.image, screenX, screenY, TILE_SIZE, TILE_SIZE);
+          unitX + spriteWidth / TILE_SIZE > camera.x && unitX < camera.x + VIEW_WIDTH &&
+          unitY + spriteHeight / TILE_SIZE > camera.y && unitY < camera.y + VIEW_HEIGHT) {
+        ctx.drawImage(unit.image, screenX, screenY, spriteWidth, spriteHeight);
       }
       if (!isUnitMoving && (!isCombatResolving || unit.hpDisplayOverride !== undefined) &&
-          unitX >= camera.x && unitX < camera.x + VIEW_WIDTH &&
-          unitY >= camera.y && unitY < camera.y + VIEW_HEIGHT) {
-        const hpBadgeX = screenX + TILE_SIZE / 2 - 16;
-        const hpBadgeY = screenY + TILE_SIZE - 20;
+          unitX + spriteWidth / TILE_SIZE > camera.x && unitX < camera.x + VIEW_WIDTH &&
+          unitY + spriteHeight / TILE_SIZE > camera.y && unitY < camera.y + VIEW_HEIGHT) {
+        const hpBadgeX = screenX + spriteWidth / 2 - 16;
+        const hpBadgeY = screenY + spriteHeight - 20;
         const visibleHp = unit.hpDisplayOverride ?? unit.hp;
         ctx.save();
         ctx.fillStyle = '#101510e8';
@@ -1541,19 +1551,19 @@
         ctx.font = 'bold 13px Arial, "Yu Gothic UI", Meiryo, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(Math.max(0, Math.ceil(visibleHp))), screenX + TILE_SIZE / 2, hpBadgeY + 8.5);
+        ctx.fillText(String(Math.max(0, Math.ceil(visibleHp))), screenX + spriteWidth / 2, hpBadgeY + 8.5);
         ctx.restore();
       }
       if (enemyRangePreview?.mode === 'attack' && unit === enemyRangePreview.target &&
-          unitX >= camera.x && unitX < camera.x + VIEW_WIDTH &&
-          unitY >= camera.y && unitY < camera.y + VIEW_HEIGHT) {
+          unitX + spriteWidth / TILE_SIZE > camera.x && unitX < camera.x + VIEW_WIDTH &&
+          unitY + spriteHeight / TILE_SIZE > camera.y && unitY < camera.y + VIEW_HEIGHT) {
         ctx.save();
         ctx.strokeStyle = '#fff3a6';
         ctx.lineWidth = 4;
-        ctx.strokeRect(screenX + 3, screenY + 3, TILE_SIZE - 6, TILE_SIZE - 6);
+        ctx.strokeRect(screenX + 3, screenY + 3, spriteWidth - 6, spriteHeight - 6);
         ctx.strokeStyle = '#c62828';
         ctx.lineWidth = 2;
-        ctx.strokeRect(screenX + 7, screenY + 7, TILE_SIZE - 14, TILE_SIZE - 14);
+        ctx.strokeRect(screenX + 7, screenY + 7, spriteWidth - 14, spriteHeight - 14);
         ctx.restore();
       }
     }
@@ -1562,18 +1572,20 @@
       const frame = Math.min(explosionFrameCount - 1, Math.floor((performance.now() - effect.startedAt) / explosionFrameDuration));
       const screenX = (effect.x - camera.x) * TILE_SIZE;
       const screenY = (effect.y - camera.y) * TILE_SIZE;
-      if (screenX < -TILE_SIZE || screenX > VIEW_PIXEL_WIDTH || screenY < -TILE_SIZE || screenY > VIEW_PIXEL_HEIGHT) continue;
+      const effectWidth = effect.unit.spriteWidth ?? TILE_SIZE;
+      const effectHeight = effect.unit.spriteHeight ?? TILE_SIZE;
+      if (screenX < -effectWidth || screenX > VIEW_PIXEL_WIDTH || screenY < -effectHeight || screenY > VIEW_PIXEL_HEIGHT) continue;
 
       // Keep the defeated unit visible beneath the first four explosion frames.
       if (frame < 4 && effect.unit.image.complete && effect.unit.image.naturalWidth > 0) {
-        ctx.drawImage(effect.unit.image, screenX, screenY, TILE_SIZE, TILE_SIZE);
+        ctx.drawImage(effect.unit.image, screenX, screenY, effectWidth, effectHeight);
       }
       if (explosionImage.complete && explosionImage.naturalWidth > 0) {
         const frameWidth = explosionImage.naturalWidth / 4;
         const frameHeight = explosionImage.naturalHeight / 2;
         const sourceX = (frame % 4) * frameWidth;
         const sourceY = Math.floor(frame / 4) * frameHeight;
-        ctx.drawImage(explosionImage, sourceX, sourceY, frameWidth, frameHeight, screenX, screenY, TILE_SIZE, TILE_SIZE);
+        ctx.drawImage(explosionImage, sourceX, sourceY, frameWidth, frameHeight, screenX, screenY, effectWidth, effectHeight);
       }
     }
 
