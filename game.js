@@ -1,5 +1,6 @@
 (() => {
-  const MAP_SIZE = 20;
+  const MAP_WIDTH = 20;
+  const MAP_HEIGHT = 16;
   const TILE_SIZE = 64;
   const VIEW_WIDTH = 16;
   const VIEW_HEIGHT = 12;
@@ -7,6 +8,8 @@
   const VIEW_PIXEL_HEIGHT = TILE_SIZE * VIEW_HEIGHT;
   const canvas = document.querySelector('#map');
   const ctx = canvas.getContext('2d');
+  const mapBackground = new Image();
+  mapBackground.src = 'Unit/M001.png';
   const mapScrollbars = {
     x: document.querySelector('#map-scrollbar-x'),
     y: document.querySelector('#map-scrollbar-y'),
@@ -30,6 +33,7 @@
   const introEventImage = introEvent.querySelector('img');
   const introImageSource = introEventImage.getAttribute('src');
   const storyText = document.querySelector('#story-text');
+  const storySkip = document.querySelector('#story-skip');
   const storyStart = document.querySelector('#story-start');
   const gameShell = document.querySelector('.game-shell');
   const titleOptions = [...document.querySelectorAll('[data-title-action]')];
@@ -51,12 +55,14 @@
   let isClearStory = false;
   let gameOverOptionsReady = false;
   let gameOverSelection = 0;
+  let currentStoryText = '';
+  let skipStoryReveal = false;
 
-  const startCursor = { x: 10, y: 10 };
+  const startCursor = { x: 9, y: 9 };
   const cursor = { ...startCursor };
   const initialCamera = {
-    x: Math.max(0, Math.min(MAP_SIZE - VIEW_WIDTH, startCursor.x - Math.floor(VIEW_WIDTH / 2))),
-    y: Math.max(0, Math.min(MAP_SIZE - VIEW_HEIGHT, startCursor.y - Math.floor(VIEW_HEIGHT / 2))),
+    x: Math.max(0, Math.min(MAP_WIDTH - VIEW_WIDTH, startCursor.x - Math.floor(VIEW_WIDTH / 2))),
+    y: Math.max(0, Math.min(MAP_HEIGHT - VIEW_HEIGHT, startCursor.y - Math.floor(VIEW_HEIGHT / 2))),
   };
   const camera = { ...initialCamera };
   const cameraTarget = { ...initialCamera };
@@ -64,26 +70,36 @@
   let pointerGesture = null;
   let lastGestureDragged = false;
   const units = [
-    { id: 'PC01', side: 'player', x: 3, y: 9, hp: 10, maxHp: 10, moveRange: 5, minAttackRange: 1, attackRange: 5, attackPower: 3, evasion: 5, hitBonus: 2, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
-    { id: 'PC02', side: 'player', x: 3, y: 5, hp: 12, maxHp: 12, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 4, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
-    { id: 'PC03', side: 'player', x: 2, y: 12, hp: 25, maxHp: 25, moveRange: 4, minAttackRange: 2, attackRange: 6, attackPower: 6, evasion: 0, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
-    { id: 'EN01', side: 'enemy', x: 13, y: 10, hp: 15, maxHp: 15, moveRange: 5, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, imageFile: 'EN02.png', spriteWidth: 128, spriteHeight: 128, image: new Image() },
-    { id: 'EN02', side: 'enemy', x: 15, y: 12, hp: 13, maxHp: 13, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, imageFile: 'EN03.png', spriteWidth: 128, spriteHeight: 64, image: new Image() },
+    { id: 'PC01', side: 'player', x: 2, y: 9, hp: 10, maxHp: 10, moveRange: 5, minAttackRange: 1, attackRange: 5, attackPower: 3, evasion: 5, hitBonus: 2, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
+    { id: 'PC02', side: 'player', x: 3, y: 6, hp: 12, maxHp: 12, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 4, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
+    { id: 'PC03', side: 'player', x: 3, y: 12, hp: 25, maxHp: 25, moveRange: 4, minAttackRange: 2, attackRange: 6, attackPower: 6, evasion: 0, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
+    { id: 'EN01', side: 'enemy', x: 14, y: 11, hp: 15, maxHp: 15, moveRange: 5, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, imageFile: 'EN02.png', spriteWidth: 128, spriteHeight: 128, image: new Image() },
+    { id: 'EN02', side: 'enemy', x: 15, y: 13, hp: 13, maxHp: 13, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, imageFile: 'EN03.png', spriteWidth: 128, spriteHeight: 64, image: new Image() },
   ];
   const initialUnits = units.map((unit) => ({ ...unit }));
   const obstacles = [
-    { id: 'OBJ01', x: 8, y: 8, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ02', x: 7, y: 7, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ03', x: 10, y: 10, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ04', x: 12, y: 10, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ05', x: 5, y: 9, imageFile: 'obstacles_02.png', image: new Image() },
-    { id: 'OBJ06', x: 5, y: 10, imageFile: 'obstacles_02.png', image: new Image() },
-    { id: 'OBJ07', x: 8, y: 11, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ10', x: 13, y: 9, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ08', x: 6, y: 11, imageFile: 'obstacles_02.png', image: new Image() },
-    { id: 'OBJ09', x: 8, y: 12, imageFile: 'obstacles_02.png', image: new Image() },
+    { id: 'OBJ01', x: 9, y: 15, imageFile: 'obstacles_01.png', image: new Image() },
+    { id: 'OBJ02', x: 7, y: 10, imageFile: 'obstacles_01.png', image: new Image() },
+    // { id: 'OBJ03', x: 10, y: 10, imageFile: 'obstacles_01.png', image: new Image() },
+    // { id: 'OBJ04', x: 12, y: 10, imageFile: 'obstacles_01.png', image: new Image() },
+    // { id: 'OBJ05', x: 5, y: 9, imageFile: 'obstacles_02.png', image: new Image() },
+    // { id: 'OBJ06', x: 5, y: 10, imageFile: 'obstacles_02.png', image: new Image() },
+    // { id: 'OBJ07', x: 8, y: 11, imageFile: 'obstacles_01.png', image: new Image() },
+    // { id: 'OBJ10', x: 13, y: 9, imageFile: 'obstacles_01.png', image: new Image() },
+    // { id: 'OBJ08', x: 6, y: 11, imageFile: 'obstacles_02.png', image: new Image() },
+    // { id: 'OBJ09', x: 8, y: 12, imageFile: 'obstacles_02.png', image: new Image() },
   ];
   const initialObstacles = obstacles.map((obstacle) => ({ ...obstacle }));
+  const impassableTiles = new Set([
+    '9,6', '10,6', '11,6',
+    '10,7', '11,7', '12,7',
+    '10,8', '11,8', '12,8',
+    '11,9', '12,9',
+    '13,3', '14,3',
+    '16,12', '17,12',
+    '3,9', '4,9',
+    '8,13', '12,13',
+  ]);
   let currentSide = 'player';
   const sideTurnCounts = { player: 1, enemy: 1 };
   let selectedUnit = null;
@@ -199,8 +215,8 @@
         commitPendingMove();
         return;
       }
-      cursor.x = Math.max(0, Math.min(MAP_SIZE - 1, mapX));
-      cursor.y = Math.max(0, Math.min(MAP_SIZE - 1, mapY));
+      cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
+      cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
       const distance = selectedUnit ? Math.abs(mapX - selectedUnit.x) + Math.abs(mapY - selectedUnit.y) : Infinity;
       if (!selectedUnit || !isWithinAttackRange(selectedUnit, distance)) {
         if (pendingMove?.unit === selectedUnit) rollbackPendingMove();
@@ -219,8 +235,8 @@
       if ((clickedUnit && clickedUnit !== selectedUnit) || !destination) {
         rangeMode = null;
         unitCommand.hidden = true;
-        cursor.x = Math.max(0, Math.min(MAP_SIZE - 1, mapX));
-        cursor.y = Math.max(0, Math.min(MAP_SIZE - 1, mapY));
+        cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
+        cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
         scrollToCursor();
         return;
       }
@@ -242,8 +258,8 @@
     } else {
       unitCommand.hidden = true;
       unitStatus.hidden = true;
-      cursor.x = Math.max(0, Math.min(MAP_SIZE - 1, mapX));
-      cursor.y = Math.max(0, Math.min(MAP_SIZE - 1, mapY));
+      cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
+      cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
       if (!clickedDuringAction) emptyCommand.hidden = false;
     }
     scrollToCursor();
@@ -535,14 +551,20 @@
   }
 
   async function playIntroStory() {
-    const story = '『サンプル』\nレジスタンスに助けられたヒロイン。\n彼女はレジスタンスに加入し、人類の復権のために戦う。\n敵は人類に牙を剥いたロボット軍団。\n「弟…絶対に見つけ出すからね！\nそれまで、お姉ちゃんは負けないから！」\n\n●勝利条件　敵ロボットの全滅\n●敗北条件　味方の全滅';
+    currentStoryText = '『サンプル』\nレジスタンスに助けられたヒロイン。\n彼女はレジスタンスに加入し、人類の復権のために戦う。\n敵は人類に牙を剥いたロボット軍団。\n「弟…絶対に見つけ出すからね！\nそれまで、お姉ちゃんは負けないから！」\n\n●勝利条件　敵ロボットの全滅\n●敗北条件　味方の全滅';
     storyText.textContent = '';
     storyStart.disabled = true;
-    for (const character of Array.from(story)) {
+    storySkip.hidden = false;
+    skipStoryReveal = false;
+    for (const character of Array.from(currentStoryText)) {
+      if (skipStoryReveal) break;
       storyText.textContent += character;
       storyText.scrollTop = storyText.scrollHeight;
       await wait(32);
     }
+    storyText.textContent = currentStoryText;
+    storyText.scrollTop = storyText.scrollHeight;
+    storySkip.hidden = true;
     storyStart.disabled = false;
   }
 
@@ -550,6 +572,7 @@
     isClearStory = true;
     introEventImage.src = 'Unit/Event_01_ED.png';
     storyStart.textContent = '\u300aClick to Top\u300b';
+    storySkip.hidden = true;
     storyText.textContent = '';
     storyStart.disabled = true;
     const story = '\u300e\u30b5\u30f3\u30d7\u30eb\u300f\n\u30ed\u30dc\u30c3\u30c8\u8ecd\u56e3\u3092\u6483\u7834\u3057\u305f\u30d2\u30ed\u30a4\u30f3\u305f\u3061\u3002\n\u3057\u3070\u3057\u306e\u4f11\u606f\u3092\u3068\u308b\u3002\n\u3060\u304c\u30ed\u30dc\u30c3\u30c8\u8ecd\u56e3\u306e\u6b21\u306e\u9b54\u306e\u624b\u304c\u8feb\u3063\u3066\u3044\u305f\u2026\u2026';
@@ -685,6 +708,15 @@
   storyStart.addEventListener('click', () => {
     if (isClearStory) returnToTitle();
     else enterStage();
+  });
+
+  storySkip.addEventListener('click', () => {
+    if (isClearStory || storySkip.hidden) return;
+    skipStoryReveal = true;
+    storyText.textContent = currentStoryText;
+    storyText.scrollTop = storyText.scrollHeight;
+    storySkip.hidden = true;
+    storyStart.disabled = false;
   });
 
   function enterStage() {
@@ -1285,7 +1317,7 @@
         const x = current.x + dx;
         const y = current.y + dy;
         const nextKey = key(x, y);
-        if (x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE || distances.has(nextKey)) continue;
+        if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT || distances.has(nextKey)) continue;
 
         if (isUnitPositionBlocked(movingUnit, x, y)) continue;
         distances.set(nextKey, nextDistance);
@@ -1308,7 +1340,7 @@
         const x = current.x + dx;
         const y = current.y + dy;
         const nextKey = key(x, y);
-        if (x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE || previous.has(nextKey)) continue;
+        if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT || previous.has(nextKey)) continue;
         if (isUnitPositionBlocked(movingUnit, x, y)) continue;
         previous.set(nextKey, key(current.x, current.y));
         queue.push({ x, y });
@@ -1318,7 +1350,7 @@
     if (!previous.has(targetKey)) return [];
     const path = [];
     let stepKey = targetKey;
-    let remaining = MAP_SIZE * MAP_SIZE;
+    let remaining = MAP_WIDTH * MAP_HEIGHT;
     while (stepKey !== null && remaining-- > 0) {
       if (!previous.has(stepKey)) return [];
       const [x, y] = stepKey.split(',').map(Number);
@@ -1338,7 +1370,12 @@
 
   function isUnitPositionBlocked(unit, x, y) {
     const { width, height } = getFootprintSize(unit);
-    if (x < 0 || y < 0 || x + width > MAP_SIZE || y + height > MAP_SIZE) return true;
+    if (x < 0 || y < 0 || x + width > MAP_WIDTH || y + height > MAP_HEIGHT) return true;
+    for (let tileY = y; tileY < y + height; tileY++) {
+      for (let tileX = x; tileX < x + width; tileX++) {
+        if (impassableTiles.has(`${tileX},${tileY}`)) return true;
+      }
+    }
     const overlaps = (otherX, otherY, otherWidth, otherHeight) =>
       x < otherX + otherWidth && x + width > otherX &&
       y < otherY + otherHeight && y + height > otherY;
@@ -1428,8 +1465,8 @@
   function setCameraPosition(x, y) {
     if (cameraFrame) cancelAnimationFrame(cameraFrame);
     cameraFrame = 0;
-    camera.x = Math.max(0, Math.min(MAP_SIZE - VIEW_WIDTH, x));
-    camera.y = Math.max(0, Math.min(MAP_SIZE - VIEW_HEIGHT, y));
+    camera.x = Math.max(0, Math.min(MAP_WIDTH - VIEW_WIDTH, x));
+    camera.y = Math.max(0, Math.min(MAP_HEIGHT - VIEW_HEIGHT, y));
     cameraTarget.x = camera.x;
     cameraTarget.y = camera.y;
     draw();
@@ -1438,7 +1475,7 @@
   function setupMapScrollbar(scrollbar, axis) {
     const thumb = scrollbar.querySelector('span');
     const isHorizontal = axis === 'x';
-    const maximum = isHorizontal ? MAP_SIZE - VIEW_WIDTH : MAP_SIZE - VIEW_HEIGHT;
+    const maximum = isHorizontal ? MAP_WIDTH - VIEW_WIDTH : MAP_HEIGHT - VIEW_HEIGHT;
     let drag = null;
 
     scrollbar.addEventListener('pointerdown', (event) => {
@@ -1504,8 +1541,8 @@
   }
 
   function scrollToCursor() {
-    cameraTarget.x = Math.max(0, Math.min(MAP_SIZE - VIEW_WIDTH, cursor.x - Math.floor(VIEW_WIDTH / 2)));
-    cameraTarget.y = Math.max(0, Math.min(MAP_SIZE - VIEW_HEIGHT, cursor.y - Math.floor(VIEW_HEIGHT / 2)));
+    cameraTarget.x = Math.max(0, Math.min(MAP_WIDTH - VIEW_WIDTH, cursor.x - Math.floor(VIEW_WIDTH / 2)));
+    cameraTarget.y = Math.max(0, Math.min(MAP_HEIGHT - VIEW_HEIGHT, cursor.y - Math.floor(VIEW_HEIGHT / 2)));
     draw();
     if (!cameraFrame && (Math.abs(camera.x - cameraTarget.x) > 0.01 || Math.abs(camera.y - cameraTarget.y) > 0.01)) {
       cameraFrame = requestAnimationFrame(animateCamera);
@@ -1540,11 +1577,27 @@
     const firstMapY = Math.floor(camera.y);
     for (let mapY = firstMapY; mapY < firstMapY + VIEW_HEIGHT + 1; mapY++) {
       for (let mapX = firstMapX; mapX < firstMapX + VIEW_WIDTH + 1; mapX++) {
-        if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) continue;
+        if (mapX < 0 || mapX >= MAP_WIDTH || mapY < 0 || mapY >= MAP_HEIGHT) continue;
         const screenX = (mapX - camera.x) * TILE_SIZE;
         const screenY = (mapY - camera.y) * TILE_SIZE;
-        ctx.fillStyle = tileColor(mapX, mapY);
-        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        if (mapBackground.complete && mapBackground.naturalWidth > 0) {
+          const sourceX = mapX * mapBackground.naturalWidth / MAP_WIDTH;
+          const sourceY = mapY * mapBackground.naturalHeight / MAP_HEIGHT;
+          ctx.drawImage(
+            mapBackground,
+            sourceX,
+            sourceY,
+            mapBackground.naturalWidth / MAP_WIDTH,
+            mapBackground.naturalHeight / MAP_HEIGHT,
+            screenX,
+            screenY,
+            TILE_SIZE,
+            TILE_SIZE,
+          );
+        } else {
+          ctx.fillStyle = tileColor(mapX, mapY);
+          ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        }
         const inMoveRange = moveRangeTiles?.has(`${mapX},${mapY}`);
         const attackDistance = attackRangeUnit ? Math.abs(mapX - attackRangeUnit.x) + Math.abs(mapY - attackRangeUnit.y) : 0;
         const inAttackRange = attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance);
@@ -1643,13 +1696,13 @@
     ctx.textBaseline = 'top';
     for (let x = firstMapX; x < firstMapX + VIEW_WIDTH + 1; x++) {
       const screenX = (x - camera.x) * TILE_SIZE;
-      if (x >= 0 && x < MAP_SIZE && x % 2 === 0) ctx.fillText(String(x + 1), screenX + TILE_SIZE / 2, 6);
+      if (x >= 0 && x < MAP_WIDTH && x % 2 === 0) ctx.fillText(String(x + 1), screenX + TILE_SIZE / 2, 6);
     }
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     for (let y = firstMapY; y < firstMapY + VIEW_HEIGHT + 1; y++) {
       const screenY = (y - camera.y) * TILE_SIZE;
-      if (y >= 0 && y < MAP_SIZE && y % 2 === 0) ctx.fillText(String(y + 1), 5, screenY + TILE_SIZE / 2);
+      if (y >= 0 && y < MAP_HEIGHT && y % 2 === 0) ctx.fillText(String(y + 1), 5, screenY + TILE_SIZE / 2);
     }
 
     const cursorX = (cursor.x - camera.x) * TILE_SIZE;
@@ -1679,12 +1732,12 @@
     if (!emptyCommand.hidden) positionPanel(emptyCommand, cursor);
     const horizontalThumb = mapScrollbars.x.querySelector('span');
     const verticalThumb = mapScrollbars.y.querySelector('span');
-    const horizontalSize = VIEW_WIDTH / MAP_SIZE;
-    const verticalSize = VIEW_HEIGHT / MAP_SIZE;
+    const horizontalSize = VIEW_WIDTH / MAP_WIDTH;
+    const verticalSize = VIEW_HEIGHT / MAP_HEIGHT;
     horizontalThumb.style.width = `${horizontalSize * 100}%`;
-    horizontalThumb.style.left = `${(camera.x / (MAP_SIZE - VIEW_WIDTH)) * (1 - horizontalSize) * 100}%`;
+    horizontalThumb.style.left = `${(camera.x / (MAP_WIDTH - VIEW_WIDTH)) * (1 - horizontalSize) * 100}%`;
     verticalThumb.style.height = `${verticalSize * 100}%`;
-    verticalThumb.style.top = `${(camera.y / (MAP_SIZE - VIEW_HEIGHT)) * (1 - verticalSize) * 100}%`;
+    verticalThumb.style.top = `${(camera.y / (MAP_HEIGHT - VIEW_HEIGHT)) * (1 - verticalSize) * 100}%`;
     mapScrollbars.x.setAttribute('aria-valuenow', String(Math.round(camera.x) + 1));
     mapScrollbars.y.setAttribute('aria-valuenow', String(Math.round(camera.y) + 1));
     mapScrollbars.x.setAttribute('aria-valuetext', `左端のマス ${Math.round(camera.x) + 1}`);
@@ -1761,8 +1814,8 @@
     const direction = directions[event.key];
     if (!direction) return;
     event.preventDefault();
-    cursor.x = Math.max(0, Math.min(MAP_SIZE - 1, cursor.x + direction[0]));
-    cursor.y = Math.max(0, Math.min(MAP_SIZE - 1, cursor.y + direction[1]));
+    cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, cursor.x + direction[0]));
+    cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, cursor.y + direction[1]));
     scrollToCursor();
   });
 

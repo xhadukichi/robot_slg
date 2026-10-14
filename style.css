@@ -118,9 +118,9 @@ body {
   overflow-wrap: anywhere;
   scrollbar-color: #b3a77b #20282b;
 }
-.story-start {
+.story-skip, .story-start {
   align-self: flex-end;
-  margin-top: 8px;
+  margin-top: 4px;
   padding: 4px 8px;
   border: 0;
   background: transparent;
@@ -130,6 +130,8 @@ body {
   text-shadow: 0 2px 8px #000;
   cursor: pointer;
 }
+.story-skip { font-size: clamp(12px, 1.3vw, 16px); }
+.story-skip[hidden] { display: none; }
 .story-start:disabled { visibility: hidden; }
 .story-start:not(:disabled) { animation: story-start-blink 1s steps(2, start) infinite; }
 .story-start:focus-visible { outline: 2px solid #ffe5a3; outline-offset: 3px; }
