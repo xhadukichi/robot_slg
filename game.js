@@ -106,11 +106,6 @@
   const explosionEffects = [];
   explosionImage.src = 'Unit/Bomb_out.png';
   explosionImage.addEventListener('load', draw);
-  const mapImage = new Image();
-  const mapImageWidth = 20 * TILE_SIZE;
-  const mapImageHeight = 12 * TILE_SIZE;
-  mapImage.src = 'Unit/M001.png';
-  mapImage.addEventListener('load', draw);
   for (const unit of units) {
     const imageFile = unit.imageFile ?? `${unit.id}s.png`;
     unit.image.src = `Unit/${imageFile}`;
@@ -1543,24 +1538,13 @@
     ctx.clearRect(0, 0, VIEW_PIXEL_WIDTH, VIEW_PIXEL_HEIGHT);
     const firstMapX = Math.floor(camera.x);
     const firstMapY = Math.floor(camera.y);
-    if (mapImage.complete && mapImage.naturalWidth > 0) {
-      ctx.drawImage(
-        mapImage,
-        -camera.x * TILE_SIZE,
-        -camera.y * TILE_SIZE,
-        mapImageWidth,
-        mapImageHeight,
-      );
-    }
     for (let mapY = firstMapY; mapY < firstMapY + VIEW_HEIGHT + 1; mapY++) {
       for (let mapX = firstMapX; mapX < firstMapX + VIEW_WIDTH + 1; mapX++) {
         if (mapX < 0 || mapX >= MAP_SIZE || mapY < 0 || mapY >= MAP_SIZE) continue;
         const screenX = (mapX - camera.x) * TILE_SIZE;
         const screenY = (mapY - camera.y) * TILE_SIZE;
-        if (!mapImage.complete || mapImage.naturalWidth === 0 || mapY >= 12) {
-          ctx.fillStyle = tileColor(mapX, mapY);
-          ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-        }
+        ctx.fillStyle = tileColor(mapX, mapY);
+        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
         const inMoveRange = moveRangeTiles?.has(`${mapX},${mapY}`);
         const attackDistance = attackRangeUnit ? Math.abs(mapX - attackRangeUnit.x) + Math.abs(mapY - attackRangeUnit.y) : 0;
         const inAttackRange = attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance);
