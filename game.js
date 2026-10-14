@@ -14,6 +14,7 @@
     x: document.querySelector('#map-scrollbar-x'),
     y: document.querySelector('#map-scrollbar-y'),
   };
+  const passabilityLegend = document.querySelector('#passability-legend');
   const coordinates = document.querySelector('#coordinates');
   const unitCommand = document.querySelector('#unit-command');
   const unitStatus = document.querySelector('#unit-status');
@@ -103,6 +104,7 @@
   let currentSide = 'player';
   const sideTurnCounts = { player: 1, enemy: 1 };
   let selectedUnit = null;
+  let combatTarget = null;
   let rangeMode = null;
   let enemyRangePreview = null;
   let isUnitMoving = false;
@@ -658,6 +660,7 @@
     sideTurnCounts.player = 1;
     sideTurnCounts.enemy = 1;
     selectedUnit = null;
+    combatTarget = null;
     rangeMode = null;
     enemyRangePreview = null;
     isUnitMoving = false;
@@ -960,7 +963,7 @@
       return;
     }
 
-    const unit = units.find((candidate) => candidate.x === cursor.x && candidate.y === cursor.y);
+    const unit = getUnitAtPosition(cursor.x, cursor.y);
     if (rangeMode === 'attack') {
       if (pendingMove?.unit === selectedUnit && unit === selectedUnit) {
         commitPendingMove();
@@ -987,6 +990,7 @@
 
     const attacker = selectedUnit;
     isCombatResolving = true;
+    combatTarget = target;
     pendingMove = null;
     rangeMode = null;
     cursor.x = target.x;
@@ -1037,6 +1041,7 @@
       return true;
     } finally {
       isCombatResolving = false;
+      combatTarget = null;
       draw();
     }
   }
@@ -1368,6 +1373,14 @@
     };
   }
 
+  function getUnitAtPosition(x, y) {
+    return [...units].reverse().find((unit) => {
+      const footprint = getFootprintSize(unit);
+      return x >= unit.x && x < unit.x + footprint.width &&
+        y >= unit.y && y < unit.y + footprint.height;
+    }) ?? null;
+  }
+
   function isUnitPositionBlocked(unit, x, y) {
     const { width, height } = getFootprintSize(unit);
     if (x < 0 || y < 0 || x + width > MAP_WIDTH || y + height > MAP_HEIGHT) return true;
@@ -1563,6 +1576,8 @@
   }
 
   function draw() {
+    const showPassability = !emptyCommand.hidden;
+    passabilityLegend.hidden = !showPassability;
     const moveRangeUnit = enemyRangePreview?.mode === 'move'
       ? enemyRangePreview.unit
       : rangeMode === 'move' ? selectedUnit : null;
@@ -1605,6 +1620,11 @@
           ctx.fillStyle = inAttackRange
             ? 'rgba(237, 112, 91, 0.54)'
             : moveRangeUnit.side === 'enemy' ? 'rgba(108, 174, 244, 0.52)' : 'rgba(227, 231, 154, 0.48)';
+          ctx.fillRect(screenX + 2, screenY + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+        }
+        if (showPassability) {
+          const impassable = impassableTiles.has(`${mapX},${mapY}`) || isObstacleAt(mapX, mapY);
+          ctx.fillStyle = impassable ? 'rgba(240, 68, 68, 0.62)' : 'rgba(73, 220, 115, 0.2)';
           ctx.fillRect(screenX + 2, screenY + 2, TILE_SIZE - 4, TILE_SIZE - 4);
         }
         ctx.strokeStyle = '#1d2c23';
@@ -1705,24 +1725,33 @@
       if (y >= 0 && y < MAP_HEIGHT && y % 2 === 0) ctx.fillText(String(y + 1), 5, screenY + TILE_SIZE / 2);
     }
 
-    const cursorX = (cursor.x - camera.x) * TILE_SIZE;
-    const cursorY = (cursor.y - camera.y) * TILE_SIZE;
-    const cursorColor = enemyRangePreview?.mode === 'attack' &&
-      enemyRangePreview.target?.x === cursor.x && enemyRangePreview.target?.y === cursor.y
-      ? '#f04444'
-      : '#f1d978';
+    const cursorUnit = combatTarget ?? getUnitAtPosition(cursor.x, cursor.y);
+    const cursorFootprint = cursorUnit ? getFootprintSize(cursorUnit) : { width: 1, height: 1 };
+    const cursorMapX = cursorUnit?.x ?? cursor.x;
+    const cursorMapY = cursorUnit?.y ?? cursor.y;
+    const cursorX = (cursorMapX - camera.x) * TILE_SIZE;
+    const cursorY = (cursorMapY - camera.y) * TILE_SIZE;
+    const cursorWidth = cursorFootprint.width * TILE_SIZE;
+    const cursorHeight = cursorFootprint.height * TILE_SIZE;
+    const cursorIsAttackTarget = cursorUnit && (
+      combatTarget === cursorUnit ||
+      (rangeMode === 'attack' && selectedUnit && cursorUnit.side !== selectedUnit.side &&
+        isWithinAttackRange(selectedUnit, Math.abs(cursorUnit.x - selectedUnit.x) + Math.abs(cursorUnit.y - selectedUnit.y))) ||
+      (enemyRangePreview?.mode === 'attack' && enemyRangePreview.target === cursorUnit)
+    );
+    const cursorColor = cursorIsAttackTarget ? '#f04444' : '#f1d978';
     ctx.strokeStyle = cursorColor;
     ctx.lineWidth = 4;
-    ctx.strokeRect(cursorX + 4, cursorY + 4, TILE_SIZE - 8, TILE_SIZE - 8);
+    ctx.strokeRect(cursorX + 4, cursorY + 4, cursorWidth - 8, cursorHeight - 8);
     ctx.fillStyle = cursorColor;
     ctx.fillRect(cursorX + 4, cursorY + 4, 12, 4);
     ctx.fillRect(cursorX + 4, cursorY + 4, 4, 12);
-    ctx.fillRect(cursorX + TILE_SIZE - 16, cursorY + 4, 12, 4);
-    ctx.fillRect(cursorX + TILE_SIZE - 8, cursorY + 4, 4, 12);
-    ctx.fillRect(cursorX + 4, cursorY + TILE_SIZE - 8, 12, 4);
-    ctx.fillRect(cursorX + 4, cursorY + TILE_SIZE - 16, 4, 12);
-    ctx.fillRect(cursorX + TILE_SIZE - 16, cursorY + TILE_SIZE - 8, 12, 4);
-    ctx.fillRect(cursorX + TILE_SIZE - 8, cursorY + TILE_SIZE - 16, 4, 12);
+    ctx.fillRect(cursorX + cursorWidth - 16, cursorY + 4, 12, 4);
+    ctx.fillRect(cursorX + cursorWidth - 8, cursorY + 4, 4, 12);
+    ctx.fillRect(cursorX + 4, cursorY + cursorHeight - 8, 12, 4);
+    ctx.fillRect(cursorX + 4, cursorY + cursorHeight - 16, 4, 12);
+    ctx.fillRect(cursorX + cursorWidth - 16, cursorY + cursorHeight - 8, 12, 4);
+    ctx.fillRect(cursorX + cursorWidth - 8, cursorY + cursorHeight - 16, 4, 12);
 
     coordinates.textContent = `X ${cursor.x + 1}, Y ${cursor.y + 1}`;
     if (!unitCommand.hidden && selectedUnit) {
