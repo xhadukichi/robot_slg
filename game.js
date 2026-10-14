@@ -1511,7 +1511,8 @@
           unitY >= camera.y && unitY < camera.y + VIEW_HEIGHT) {
         ctx.drawImage(unit.image, screenX, screenY, TILE_SIZE, TILE_SIZE);
       }
-      if (unitX >= camera.x && unitX < camera.x + VIEW_WIDTH &&
+      if (!isUnitMoving && !isCombatResolving &&
+          unitX >= camera.x && unitX < camera.x + VIEW_WIDTH &&
           unitY >= camera.y && unitY < camera.y + VIEW_HEIGHT) {
         const hpBadgeX = screenX + TILE_SIZE / 2 - 16;
         const hpBadgeY = screenY + TILE_SIZE - 20;
