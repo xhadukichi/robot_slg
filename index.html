@@ -22,6 +22,7 @@
     <section id="intro-event" class="intro-event" aria-label="ステージ前イベント" hidden>
       <img src="Unit/Event_01.png" alt="イベント挿絵" />
       <div class="story-window">
+        <div id="story-speaker" class="story-speaker"></div>
         <div id="story-text" class="story-text" aria-live="polite"></div>
         <button id="story-skip" class="story-skip" type="button">《SKIP》</button>
         <button id="story-start" class="story-start" type="button" disabled>《Game Start》</button>
@@ -48,6 +49,10 @@
           <button type="button" data-action="attack">攻撃</button>
           <button type="button" data-action="status">ステータス</button>
           <button type="button" data-action="end">行動終了</button>
+        </div>
+        <div id="move-confirm-command" class="unit-command move-confirm-command" hidden>
+          <button type="button" data-action="commit-move" class="selected">決定</button>
+          <button type="button" data-action="cancel-move">キャンセル</button>
         </div>
         <div id="unit-status" class="unit-status" hidden></div>
         <div id="empty-command" class="unit-command empty-command" hidden>

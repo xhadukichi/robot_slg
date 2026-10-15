@@ -92,6 +92,20 @@ body {
 .intro-event[hidden] { display: none; }
 .intro-event.fade-out { opacity: 0; }
 .intro-event > img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.intro-event.battle-event { background: transparent; pointer-events: none; }
+.intro-event.battle-event > img { display: none; }
+.intro-event.battle-event .story-window { pointer-events: auto; }
+.story-speaker:empty { display: none; }
+.story-speaker:not(:empty) {
+  align-self: flex-start;
+  margin: -4px 0 8px;
+  padding: 2px 12px;
+  border: 1px solid rgba(219, 224, 226, .62);
+  border-radius: 3px;
+  background: rgba(8, 13, 18, .94);
+  color: #ffe5a3;
+  font: 700 clamp(14px, 1.5vw, 18px)/1.6 "Yu Gothic UI", Meiryo, sans-serif;
+}
 .story-window {
   position: absolute;
   z-index: 1;
@@ -117,6 +131,12 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   scrollbar-color: #b3a77b #20282b;
+}
+.intro-event.battle-event .story-text {
+  flex: 0 0 3.6em;
+  height: 3.6em;
+  min-height: 3.6em;
+  max-height: 3.6em;
 }
 .story-skip, .story-start {
   align-self: flex-end;

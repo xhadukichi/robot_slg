@@ -17,6 +17,7 @@
   const passabilityLegend = document.querySelector('#passability-legend');
   const coordinates = document.querySelector('#coordinates');
   const unitCommand = document.querySelector('#unit-command');
+  const moveConfirmCommand = document.querySelector('#move-confirm-command');
   const unitStatus = document.querySelector('#unit-status');
   const emptyCommand = document.querySelector('#empty-command');
   const attackMessage = document.querySelector('#attack-message');
@@ -34,6 +35,8 @@
   const introEventImage = introEvent.querySelector('img');
   const introImageSource = introEventImage.getAttribute('src');
   const storyText = document.querySelector('#story-text');
+  const storySpeaker = document.querySelector('#story-speaker');
+  const storyWindow = introEvent.querySelector('.story-window');
   const storySkip = document.querySelector('#story-skip');
   const storyStart = document.querySelector('#story-start');
   const gameShell = document.querySelector('.game-shell');
@@ -58,6 +61,10 @@
   let gameOverSelection = 0;
   let currentStoryText = '';
   let skipStoryReveal = false;
+  let battleEventActive = false;
+  let battleMessageResolve = null;
+  let battleAttackEvents = new Map();
+  const completedBattleEvents = new Set();
 
   const startCursor = { x: 9, y: 9 };
   const cursor = { ...startCursor };
@@ -109,6 +116,7 @@
   let enemyRangePreview = null;
   let isUnitMoving = false;
   let menuSelectionIndex = 0;
+  let moveConfirmSelection = 0;
   let attackMessageTimer = 0;
   let phaseAnnouncementTimer = 0;
   let turnConfirmSelection = 0;
@@ -195,7 +203,7 @@
       event.preventDefault();
       return;
     }
-    if (isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden) return;
+    if (battleEventActive || isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden) return;
     canvas.focus();
     emptyCommand.hidden = true;
     const bounds = canvas.getBoundingClientRect();
@@ -211,6 +219,7 @@
         mapY >= unit.y && mapY < unit.y + heightInTiles;
     });
     const clickedObstacle = obstacles.find((obstacle) => obstacle.x === mapX && obstacle.y === mapY);
+    if (rangeMode === 'move-confirm') return;
     const clickedDuringAction = rangeMode !== null;
     if (rangeMode === 'attack') {
       if (pendingMove?.unit === selectedUnit && clickedUnit === selectedUnit) {
@@ -291,6 +300,14 @@
     chooseUnitAction(event.target.closest('button')?.dataset.action);
   });
 
+  moveConfirmCommand.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (isCombatResolving || explosionEffects.length) return;
+    const action = event.target.closest('button')?.dataset.action;
+    if (action === 'commit-move') commitPendingMove();
+    else if (action === 'cancel-move') rollbackPendingMove();
+  });
+
   turnConfirm.addEventListener('click', (event) => {
     if (isCombatResolving || explosionEffects.length) return;
     const choice = event.target.closest('button')?.dataset.choice;
@@ -306,6 +323,7 @@
 
   function openUnitMenu(unit) {
     selectedUnit = unit;
+    moveConfirmCommand.hidden = true;
     cursor.x = unit.x;
     cursor.y = unit.y;
     rangeMode = null;
@@ -340,6 +358,7 @@
     if (selectedUnit.side !== currentSide || selectedUnit.ended) return;
     if (action === 'end') {
       unitCommand.hidden = true;
+      moveConfirmCommand.hidden = true;
       rangeMode = null;
       if (pendingMove?.unit === selectedUnit) pendingMove = null;
       selectedUnit.ended = true;
@@ -353,6 +372,7 @@
     emptyCommand.hidden = true;
     rangeMode = action;
     unitCommand.hidden = true;
+    moveConfirmCommand.hidden = true;
     cursor.x = selectedUnit.x;
     cursor.y = selectedUnit.y;
     scrollToCursor();
@@ -542,6 +562,8 @@
     if (titleTransitioning) return;
     titleTransitioning = true;
     isClearStory = false;
+    battleEventActive = false;
+    completedBattleEvents.clear();
     introEventImage.src = introImageSource;
     storyStart.textContent = '\u300aGame Start\u300b';
     titleScreen.classList.add('fade-out');
@@ -553,11 +575,30 @@
   }
 
   async function playIntroStory() {
-    currentStoryText = '『サンプル』\nレジスタンスに助けられたヒロイン。\n彼女はレジスタンスに加入し、人類の復権のために戦う。\n敵は人類に牙を剥いたロボット軍団。\n「弟…絶対に見つけ出すからね！\nそれまで、お姉ちゃんは負けないから！」\n\n●勝利条件　敵ロボットの全滅\n●敗北条件　味方の全滅';
     storyText.textContent = '';
     storyStart.disabled = true;
-    storySkip.hidden = false;
+    storyStart.textContent = '\u300aGame Start\u300b';
+    storySkip.hidden = true;
     skipStoryReveal = false;
+    introEvent.classList.add('fade-out');
+    introEvent.hidden = false;
+
+    try {
+      const opening = parseEventSection(await loadEventScript('Event/Event_001.txt'), '\uff2f\uff30');
+      if (!opening.message) throw new Error('Event_001.txt にOPのＭＥＳがありません。');
+      introEventImage.src = `Unit/${opening.background || introImageSource.split('/').pop()}`;
+      await waitForImage(introEventImage);
+      if (opening.bgm) setBgm(opening.bgm);
+      currentStoryText = opening.message;
+    } catch (error) {
+      console.error('OPイベントを読み込めませんでした。', error);
+      currentStoryText = `OPイベントを読み込めませんでした。\n${error.message || error}\nEvent/Event_001.txt と素材を確認してください。`;
+      introEventImage.src = introImageSource;
+    }
+
+    await wait(32);
+    introEvent.classList.remove('fade-out');
+    storySkip.hidden = false;
     for (const character of Array.from(currentStoryText)) {
       if (skipStoryReveal) break;
       storyText.textContent += character;
@@ -570,20 +611,92 @@
     storyStart.disabled = false;
   }
 
+  async function loadEventScript(path) {
+    if (window.location.protocol === 'file:') {
+      throw new Error('file:// からはイベントファイルを読み込めません。ローカルHTTPサーバー経由で開いてください。');
+    }
+    const response = await fetch(new URL(path, document.baseURI), { cache: 'no-store' });
+    if (!response.ok) throw new Error(`${path} の読み込みに失敗しました (${response.status})`);
+    return response.text();
+  }
+
+  function parseEventSection(source, sectionName) {
+    const lines = source.replace(/\r/g, '').split('\n');
+    const sectionIndex = lines.findIndex((line) => line.replace(/\/\/.*$/, '').trim() === sectionName);
+    if (sectionIndex < 0) throw new Error(`${sectionName} セクションがありません。`);
+
+    let opened = false;
+    let depth = 0;
+    const sectionLines = [];
+    for (let lineIndex = sectionIndex + 1; lineIndex < lines.length; lineIndex++) {
+      const line = lines[lineIndex].replace(/\/\/.*$/, '');
+      for (const character of line) {
+        if (character === '\uff5b') {
+          opened = true;
+          depth++;
+        } else if (character === '\uff5d' && opened) {
+          depth--;
+          if (depth === 0) return parseEventCommands(sectionLines);
+        }
+      }
+      if (opened && depth > 0) sectionLines.push(line);
+    }
+    throw new Error(`${sectionName} セクションの括弧が閉じていません。`);
+  }
+
+  function parseEventCommands(lines) {
+    const event = { background: '', bgm: '', fadeIn: false, message: '' };
+    let readingMessage = false;
+    const messageLines = [];
+
+    for (const line of lines) {
+      const content = line.replace(/^[\t \u3000]+|[\t \u3000]+$/g, '');
+      const trimmed = content.trim();
+      if (!trimmed) {
+        if (readingMessage) messageLines.push('');
+        continue;
+      }
+      let match = trimmed.match(/^ＢＧ[：:]\s*(.+)$/);
+      if (match) { event.background = match[1].trim(); readingMessage = false; continue; }
+      match = trimmed.match(/^ＢＧＭ[：:]\s*(.+)$/);
+      if (match) { event.bgm = match[1].trim(); readingMessage = false; continue; }
+      if (trimmed === 'フェードイン') { event.fadeIn = true; readingMessage = false; continue; }
+      if (trimmed === 'ＭＥＳ') { readingMessage = true; continue; }
+      if (/^GOTO[：:]/i.test(trimmed) || /^ＧＯＴＯ[：:]/.test(trimmed)) break;
+      if (readingMessage) messageLines.push(content);
+    }
+
+    event.message = messageLines.join('\n').trim();
+    return event;
+  }
+
+  function waitForImage(image) {
+    if (image.complete && image.naturalWidth > 0) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      image.addEventListener('load', resolve, { once: true });
+      image.addEventListener('error', () => reject(new Error(`${image.src} を読み込めません。`)), { once: true });
+    });
+  }
+
   async function playClearStory() {
     isClearStory = true;
-    introEventImage.src = 'Unit/Event_01_ED.png';
     storyStart.textContent = '\u300aClick to Top\u300b';
-    storySkip.hidden = true;
     storyText.textContent = '';
     storyStart.disabled = true;
-    const story = '\u300e\u30b5\u30f3\u30d7\u30eb\u300f\n\u30ed\u30dc\u30c3\u30c8\u8ecd\u56e3\u3092\u6483\u7834\u3057\u305f\u30d2\u30ed\u30a4\u30f3\u305f\u3061\u3002\n\u3057\u3070\u3057\u306e\u4f11\u606f\u3092\u3068\u308b\u3002\n\u3060\u304c\u30ed\u30dc\u30c3\u30c8\u8ecd\u56e3\u306e\u6b21\u306e\u9b54\u306e\u624b\u304c\u8feb\u3063\u3066\u3044\u305f\u2026\u2026';
-    for (const character of Array.from(story)) {
-      storyText.textContent += character;
-      storyText.scrollTop = storyText.scrollHeight;
-      await wait(32);
+    skipStoryReveal = false;
+    try {
+      const epilogue = parseEventSection(await loadEventScript('Event/Event_001.txt'), '\uff25\uff30');
+      if (!epilogue.message) throw new Error('Event_001.txt にＥＰのＭＥＳがありません。');
+      introEventImage.src = 'Unit/' + (epilogue.background || 'Event_01_ED.png');
+      await waitForImage(introEventImage);
+      if (epilogue.bgm) setBgm(epilogue.bgm);
+      currentStoryText = epilogue.message;
+    } catch (error) {
+      console.error('ＥＰイベントを読み込めませんでした。', error);
+      currentStoryText = 'ＥＰイベントを読み込めませんでした。\n' + (error.message || error);
     }
-    storyStart.disabled = false;
+    storySkip.hidden = false;
+    await revealStoryText();
   }
 
   async function showClearStory() {
@@ -615,6 +728,7 @@
     gameShell.hidden = true;
     gameResult.hidden = true;
     resetStageState();
+    completedBattleEvents.clear();
     introEventImage.src = introImageSource;
     storyStart.textContent = '\u300aGame Start\u300b';
     introEvent.hidden = false;
@@ -660,6 +774,7 @@
     sideTurnCounts.player = 1;
     sideTurnCounts.enemy = 1;
     selectedUnit = null;
+    moveConfirmCommand.hidden = true;
     combatTarget = null;
     rangeMode = null;
     enemyRangePreview = null;
@@ -710,11 +825,17 @@
 
   storyStart.addEventListener('click', () => {
     if (isClearStory) returnToTitle();
-    else enterStage();
+    else if (battleEventActive) closeBattleMessage();
+    else loadBattleOpening();
+  });
+
+  storyWindow.addEventListener('click', (event) => {
+    if (!battleEventActive || storyStart.disabled || event.target.closest('button')) return;
+    closeBattleMessage();
   });
 
   storySkip.addEventListener('click', () => {
-    if (isClearStory || storySkip.hidden) return;
+    if (storySkip.hidden) return;
     skipStoryReveal = true;
     storyText.textContent = currentStoryText;
     storyText.scrollTop = storyText.scrollHeight;
@@ -722,14 +843,261 @@
     storyStart.disabled = false;
   });
 
+  async function loadBattleOpening() {
+    storyStart.disabled = true;
+    try {
+      const battleScript = await loadEventScript('Event/Battle_001.txt');
+      applyBattleSetup(battleScript);
+      battleAttackEvents = parseBattleAttackRecords(battleScript);
+      const turnZeroMessages = parseBattleMessageRecords(extractEventBlock(battleScript, 'ターン　０'));
+      if (!turnZeroMessages.length) throw new Error('ターン　０にＭＥＳがありません。');
+      enterStage();
+      await playBattleMessages(turnZeroMessages);
+      announceCurrentTurn();
+      playPhaseBgm();
+    } catch (error) {
+      console.error('Battle_001を読み込めませんでした。', error);
+      storyText.textContent = `Battle_001を読み込めませんでした。\n${error.message || error}`;
+      storyStart.disabled = false;
+      storySkip.hidden = true;
+      introEvent.hidden = false;
+    }
+  }
+
+  function showBattleMessage(message) {
+    return new Promise((resolve) => {
+      battleMessageResolve = resolve;
+      battleEventActive = true;
+      currentStoryText = message;
+      storyText.textContent = '';
+      storySpeaker.textContent = activeBattleSpeaker;
+      storyStart.textContent = '\u300aContinue\u300b';
+      storySkip.hidden = true;
+      skipStoryReveal = false;
+      introEvent.classList.add('battle-event');
+      introEvent.hidden = false;
+      canvas.focus();
+      revealStoryText();
+    });
+  }
+
+  function closeBattleMessage() {
+    battleEventActive = false;
+    introEvent.hidden = true;
+    introEvent.classList.remove('battle-event');
+    storySkip.hidden = true;
+    storySpeaker.textContent = '';
+    storyStart.textContent = '\u300aGame Start\u300b';
+    canvas.focus();
+    const resolveMessage = battleMessageResolve;
+    battleMessageResolve = null;
+    resolveMessage?.();
+  }
+
+  let activeBattleSpeaker = '';
+
+  async function playBattleMessages(messages) {
+    for (const message of messages) {
+      if (message.followCursor) {
+        const target = units.find((unit) => unit.id === message.unitId);
+        if (target) {
+          cursor.x = target.x;
+          cursor.y = target.y;
+          scrollToCursor();
+          await waitForCameraToStop();
+          draw();
+        }
+      }
+      activeBattleSpeaker = message.speaker;
+      await showBattleMessage(message.text);
+    }
+    activeBattleSpeaker = '';
+    closeBattleMessage();
+  }
+
+  function parseBattleAttackEvents(source) {
+    const events = new Map();
+    const names = source.replace(/\r/g, '').split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /^攻撃前[\t \u3000]+[\d０-９]+$/.test(line));
+    for (const name of names) {
+      const lines = extractEventBlock(source, name);
+      const condition = lines.find((line) => /^PC\d+[\t \u3000]+ＶＳ[\t \u3000]+ＥＮ$/.test(line.trim()));
+      const match = condition?.trim().match(/^PC(\d+)[\t \u3000]+ＶＳ[\t \u3000]+ＥＮ$/);
+      const message = parseBattleMessages(lines);
+      if (match && message) events.set('PC' + match[1].padStart(2, '0'), { name, message });
+    }
+    return events;
+  }
+
+  function parseBattleAttackRecords(source) {
+    const events = new Map();
+    const names = source.replace(/\r/g, '').split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /^攻撃前[\t \u3000]+[\d０-９]+$/.test(line));
+    for (const name of names) {
+      const lines = extractEventBlock(source, name);
+      const condition = lines.find((line) => /^PC\d+[\t \u3000]+ＶＳ[\t \u3000]+ＥＮ$/.test(line.trim()));
+      const match = condition?.trim().match(/^PC(\d+)[\t \u3000]+ＶＳ[\t \u3000]+ＥＮ$/);
+      const messages = parseBattleMessageRecords(lines);
+      if (match && messages.length) events.set('PC' + match[1].padStart(2, '0'), { name, messages });
+    }
+    return events;
+  }
+
   function enterStage() {
     introEvent.hidden = true;
     gameShell.hidden = false;
     updatePhaseLabel();
-    announceCurrentTurn();
-    playPhaseBgm();
     draw();
     canvas.focus();
+  }
+
+  async function revealStoryText() {
+    storyStart.disabled = true;
+    for (const character of Array.from(currentStoryText)) {
+      if (skipStoryReveal) break;
+      storyText.textContent += character;
+      storyText.scrollTop = storyText.scrollHeight;
+      await wait(32);
+    }
+    storyText.textContent = currentStoryText;
+    storyText.scrollTop = storyText.scrollHeight;
+    storySkip.hidden = true;
+    storyStart.disabled = false;
+  }
+
+  function parseBattleMessages(lines) {
+    const messages = [];
+    let speaker = '';
+    let body = [];
+    const saveMessage = () => {
+      const text = body.join('\n').trim();
+      if (speaker && text) messages.push(`${speaker}\n${text}`);
+    };
+
+    for (const line of lines) {
+      const command = line.trim().match(/^ＭＥＳ[\t \u3000]+(.+?)[\t \u3000]+PC\d+[\t \u3000]+Y$/);
+      if (command) {
+        saveMessage();
+        speaker = command[1].trim();
+        body = [];
+      } else if (speaker && line.trim() !== '｛' && line.trim() !== '｝') {
+        body.push(line.trim());
+      }
+    }
+    saveMessage();
+    return messages.join('\n\n');
+  }
+
+
+  function parseBattleMessageRecords(lines) {
+    const messages = [];
+    let command = null;
+    let body = [];
+    const saveMessage = () => {
+      const text = body.join('\n').trim();
+      if (!command || !text) return;
+      const number = command[2].match(/\d+/)[0].padStart(2, '0');
+      messages.push({
+        speaker: command[1].trim(),
+        unitId: 'PC' + number,
+        followCursor: command[3] === 'Y',
+        text,
+      });
+    };
+
+    for (const line of lines) {
+      const nextCommand = line.trim().match(/^ＭＥＳ[\t \u3000]+(.+?)[\t \u3000]+(PC\d+)[\t \u3000]+([YN])$/);
+      if (nextCommand) {
+        saveMessage();
+        command = nextCommand;
+        body = [];
+      } else if (command && line.trim() !== '｛' && line.trim() !== '｝') {
+        body.push(line.trim());
+      }
+    }
+    saveMessage();
+    return messages;
+  }
+
+  function applyBattleSetup(source) {
+    const setupLines = extractEventBlock(source, '初期配置');
+    const coordinatePattern = /^\s*(PC\d+|EN\d+|OBJ\d+)\s*:\s*(.+?)\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*$/;
+    const configuredObstacles = [];
+
+    for (const line of setupLines) {
+      const match = line.match(coordinatePattern);
+      if (!match) continue;
+      const [, id, imageFile, x, y] = match;
+      const position = { x: Number(x) - 1, y: Number(y) - 1 };
+      if (id.startsWith('OBJ')) {
+        configuredObstacles.push({ id, ...position, imageFile: imageFile.trim(), image: new Image() });
+        continue;
+      }
+
+      const unit = units.find((candidate) => candidate.id === id);
+      if (!unit) continue;
+      unit.x = position.x;
+      unit.y = position.y;
+      unit.imageFile = imageFile.trim();
+      unit.moveUsed = false;
+      unit.attackUsed = false;
+      unit.ended = false;
+    }
+
+    if (configuredObstacles.length) {
+      obstacles.splice(0, obstacles.length, ...configuredObstacles);
+      for (const obstacle of obstacles) obstacle.image.src = `Unit/${obstacle.imageFile}`;
+      initialObstacles.splice(0, initialObstacles.length, ...obstacles.map((obstacle) => ({ ...obstacle })));
+    }
+    for (const unit of units) {
+      unit.image.src = `Unit/${unit.imageFile ?? `${unit.id}s.png`}`;
+    }
+    initialUnits.splice(0, initialUnits.length, ...units.map((unit) => ({ ...unit })));
+
+    impassableTiles.clear();
+    let readingTerrain = false;
+    for (const line of setupLines) {
+      const trimmed = line.trim();
+      if (trimmed === '湖' || trimmed === '岩') { readingTerrain = true; continue; }
+      if (trimmed.startsWith('開始カーソル') || coordinatePattern.test(line)) readingTerrain = false;
+      if (!readingTerrain) continue;
+      for (const match of line.matchAll(/[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]/g)) {
+        impassableTiles.add(`${Number(match[1]) - 1},${Number(match[2]) - 1}`);
+      }
+    }
+
+    const cursorLine = setupLines.find((line) => line.includes('開始カーソル'));
+    const cursorMatch = cursorLine?.match(/[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]/);
+    if (cursorMatch) {
+      startCursor.x = Number(cursorMatch[1]) - 1;
+      startCursor.y = Number(cursorMatch[2]) - 1;
+      cursor.x = startCursor.x;
+      cursor.y = startCursor.y;
+    }
+  }
+
+  function extractEventBlock(source, blockName) {
+    const lines = source.replace(/\r/g, '').split('\n');
+    const blockIndex = lines.findIndex((line) => line.trim() === blockName);
+    if (blockIndex < 0) throw new Error(`${blockName} ブロックがありません。`);
+
+    let depth = 0;
+    let opened = false;
+    const blockLines = [];
+    for (let index = blockIndex + 1; index < lines.length; index++) {
+      const line = lines[index].replace(/\/\/.*$/, '');
+      for (const character of line) {
+        if (character === '\uff5b') { opened = true; depth++; }
+        else if (character === '\uff5d' && opened) {
+          depth--;
+          if (depth === 0) return blockLines;
+        }
+      }
+      if (opened && depth > 0) blockLines.push(line);
+    }
+    throw new Error(`${blockName} ブロックの括弧が閉じていません。`);
   }
 
   function announceCurrentTurn() {
@@ -766,6 +1134,7 @@
     turnConfirmSelection = 0;
     turnConfirm.hidden = false;
     emptyCommand.hidden = true;
+    moveConfirmCommand.hidden = true;
     updateTurnConfirmSelection();
     canvas.focus();
     draw();
@@ -972,6 +1341,11 @@
       if (unit) tryAttackTarget(unit);
       return;
     }
+    if (rangeMode === 'move-confirm') {
+      if (moveConfirmSelection === 0) commitPendingMove();
+      else rollbackPendingMove();
+      return;
+    }
     if (unit) {
       openUnitMenu(unit);
       return;
@@ -989,6 +1363,11 @@
     if (!isWithinAttackRange(selectedUnit, distance)) return false;
 
     const attacker = selectedUnit;
+    const attackEvent = battleAttackEvents.get(attacker.id);
+    if (attackEvent && !completedBattleEvents.has(attackEvent.name)) {
+      completedBattleEvents.add(attackEvent.name);
+      await playBattleMessages(attackEvent.messages);
+    }
     isCombatResolving = true;
     combatTarget = target;
     pendingMove = null;
@@ -1172,6 +1551,7 @@
     isGameOver = true;
     setBgm(message === 'ステージクリア' ? 'M005_Result.mp3' : 'M006_Event.mp3');
     unitCommand.hidden = true;
+    moveConfirmCommand.hidden = true;
     unitStatus.hidden = true;
     emptyCommand.hidden = true;
     turnConfirm.hidden = true;
@@ -1209,6 +1589,7 @@
     pendingMove = { unit: selectedUnit, x: selectedUnit.x, y: selectedUnit.y };
     selectedUnit.moveUsed = true;
     rangeMode = null;
+    moveConfirmCommand.hidden = true;
     emptyCommand.hidden = true;
     animateUnitMove(selectedUnit, path);
     scrollToCursor();
@@ -1224,6 +1605,7 @@
 
     selectedUnit = unit;
     rangeMode = 'attack';
+    moveConfirmCommand.hidden = true;
     emptyCommand.hidden = true;
     cursor.x = unit.x;
     cursor.y = unit.y;
@@ -1258,7 +1640,7 @@
       return;
     }
     if (rangeMode) {
-      if (rangeMode === 'attack' && pendingMove?.unit === selectedUnit) {
+      if (pendingMove?.unit === selectedUnit) {
         rollbackPendingMove();
         canvas.focus();
         return;
@@ -1282,6 +1664,7 @@
     delete unit.visualY;
     unit.moveUsed = false;
     pendingMove = null;
+    moveConfirmCommand.hidden = true;
     selectedUnit = unit;
     rangeMode = 'move';
     unitCommand.hidden = true;
@@ -1294,9 +1677,36 @@
   function commitPendingMove() {
     if (!pendingMove) return;
     const unit = pendingMove.unit;
+    const needsConfirmation = rangeMode === 'move-confirm';
     pendingMove = null;
     rangeMode = null;
+    moveConfirmCommand.hidden = true;
+    if (needsConfirmation) {
+      checkUnitCompletion(unit);
+      draw();
+      return;
+    }
     openUnitMenu(unit);
+  }
+
+  function showMoveConfirmation(unit) {
+    selectedUnit = unit;
+    rangeMode = 'move-confirm';
+    moveConfirmSelection = 0;
+    unitCommand.hidden = true;
+    unitStatus.hidden = true;
+    moveConfirmCommand.hidden = false;
+    cursor.x = unit.x;
+    cursor.y = unit.y;
+    updateMoveConfirmSelection();
+    scrollToCursor();
+  }
+
+  function updateMoveConfirmSelection() {
+    moveConfirmCommand.querySelectorAll('button').forEach((button, index) => {
+      button.classList.toggle('selected', index === moveConfirmSelection);
+      button.setAttribute('aria-pressed', String(index === moveConfirmSelection));
+    });
   }
 
   // Deterministic placeholder terrain: subtle patches make the grid easier to read.
@@ -1457,7 +1867,10 @@
         delete unit.visualY;
         isUnitMoving = false;
         if (onComplete) onComplete();
-        else if (!enterAttackModeIfTargetInRange(unit)) checkUnitCompletion(unit);
+        else if (!enterAttackModeIfTargetInRange(unit)) {
+          if (pendingMove?.unit === unit) showMoveConfirmation(unit);
+          else checkUnitCompletion(unit);
+        }
         draw();
         return;
       }
@@ -1562,6 +1975,19 @@
     }
   }
 
+  function waitForCameraToStop() {
+    return new Promise((resolve) => {
+      function checkCamera() {
+        if (!cameraFrame) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(checkCamera);
+      }
+      checkCamera();
+    });
+  }
+
   function animateCamera() {
     camera.x += (cameraTarget.x - camera.x) * 0.16;
     camera.y += (cameraTarget.y - camera.y) * 0.16;
@@ -1640,6 +2066,35 @@
           obstacle.y >= camera.y && obstacle.y < camera.y + VIEW_HEIGHT) {
         ctx.drawImage(obstacle.image, (obstacle.x - camera.x) * TILE_SIZE, (obstacle.y - camera.y) * TILE_SIZE, TILE_SIZE, TILE_SIZE);
       }
+    }
+
+    // Draw ground shadows before unit sprites so each unit feels grounded on the map.
+    for (const unit of units) {
+      const unitX = unit.visualX ?? unit.x;
+      const unitY = unit.visualY ?? unit.y;
+      const spriteWidth = unit.spriteWidth ?? TILE_SIZE;
+      const spriteHeight = unit.spriteHeight ?? TILE_SIZE;
+      if (unitX + spriteWidth / TILE_SIZE <= camera.x || unitX >= camera.x + VIEW_WIDTH ||
+          unitY + spriteHeight / TILE_SIZE <= camera.y || unitY >= camera.y + VIEW_HEIGHT) continue;
+      const footprint = getFootprintSize(unit);
+      const screenX = (unitX - camera.x) * TILE_SIZE + (unit.visualOffsetX ?? 0);
+      const screenY = (unitY - camera.y) * TILE_SIZE;
+      const shadowWidth = footprint.width * TILE_SIZE * 0.78;
+      const shadowHeightScale = Math.max(footprint.width, footprint.height) > 1 ? 1.5 : 1;
+      const shadowHeight = TILE_SIZE * 0.22 * shadowHeightScale;
+      const shadowOffsetY = shadowHeightScale > 1 ? 10 : 0;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.beginPath();
+      ctx.ellipse(
+        screenX + spriteWidth / 2,
+        screenY + spriteHeight - 5 - shadowOffsetY,
+        shadowWidth / 2,
+        shadowHeight / 2,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
     }
 
     // Draw units at their current map coordinates.
@@ -1757,6 +2212,7 @@
     if (!unitCommand.hidden && selectedUnit) {
       positionPanel(unitCommand, selectedUnit);
     }
+    if (!moveConfirmCommand.hidden && selectedUnit) positionPanel(moveConfirmCommand, selectedUnit);
     if (!unitStatus.hidden && selectedUnit) positionPanel(unitStatus, selectedUnit);
     if (!emptyCommand.hidden) positionPanel(emptyCommand, cursor);
     const horizontalThumb = mapScrollbars.x.querySelector('span');
@@ -1790,6 +2246,12 @@
   };
 
   canvas.addEventListener('keydown', (event) => {
+    if (battleEventActive) {
+      const confirmKey = event.key === ' ' || event.key === 'Enter' || event.key.toLowerCase() === 'x';
+      if (confirmKey && !storyStart.disabled) closeBattleMessage();
+      event.preventDefault();
+      return;
+    }
     if (isGameOver || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked) return;
     if (isUnitMoving) return;
 
@@ -1823,6 +2285,13 @@
     if (event.key === ' ' || event.key === 'Enter' || key === 'x') {
       event.preventDefault();
       activateCurrentTile();
+      return;
+    }
+
+    if (!moveConfirmCommand.hidden && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      moveConfirmSelection = 1 - moveConfirmSelection;
+      updateMoveConfirmSelection();
       return;
     }
 
