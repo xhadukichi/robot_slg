@@ -64,6 +64,10 @@
   let battleEventActive = false;
   let battleMessageResolve = null;
   let battleAttackEvents = new Map();
+  let battleDefenseEvents = new Map();
+  let battleDefeatEvents = new Map();
+  let battleEndEvent = null;
+  const eventFlags = new Set();
   const completedBattleEvents = new Set();
 
   const startCursor = { x: 9, y: 9 };
@@ -122,16 +126,29 @@
   let turnConfirmSelection = 0;
   let statusFromCommand = false;
   let isGameOver = false;
-  let pendingGameResult = '';
   let isEnemyAiRunning = false;
   let isCombatResolving = false;
   let pendingMove = null;
   const explosionFrameDuration = 200;
   const explosionFrameCount = 8;
+  const hitEffectFrameDuration = 100;
+  const hitEffectFrameCount = 8;
   const explosionImage = new Image();
   const explosionEffects = [];
+  const hitEffectImages = {
+    shot1: new Image(),
+    shot1Small: new Image(),
+    shot3: new Image(),
+    slash: new Image(),
+  };
+  const hitEffects = [];
   explosionImage.src = 'Unit/Bomb_out.png';
   explosionImage.addEventListener('load', draw);
+  hitEffectImages.shot1.src = 'Unit/1shot.png';
+  hitEffectImages.shot1Small.src = 'Unit/1shot_s.png';
+  hitEffectImages.shot3.src = 'Unit/3shot.png';
+  hitEffectImages.slash.src = 'Unit/slash.png';
+  Object.values(hitEffectImages).forEach((image) => image.addEventListener('load', draw));
   for (const unit of units) {
     const imageFile = unit.imageFile ?? `${unit.id}s.png`;
     unit.image.src = `Unit/${imageFile}`;
@@ -228,7 +245,11 @@
       }
       cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
       cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
-      const distance = selectedUnit ? Math.abs(mapX - selectedUnit.x) + Math.abs(mapY - selectedUnit.y) : Infinity;
+      const distance = selectedUnit
+        ? clickedUnit && clickedUnit !== selectedUnit
+          ? unitDistance(selectedUnit, clickedUnit)
+          : distanceFromUnitToTile(selectedUnit, mapX, mapY)
+        : Infinity;
       if (!selectedUnit || !isWithinAttackRange(selectedUnit, distance)) {
         if (pendingMove?.unit === selectedUnit) rollbackPendingMove();
         else rangeMode = null;
@@ -564,6 +585,7 @@
     isClearStory = false;
     battleEventActive = false;
     completedBattleEvents.clear();
+    eventFlags.clear();
     introEventImage.src = introImageSource;
     storyStart.textContent = '\u300aGame Start\u300b';
     titleScreen.classList.add('fade-out');
@@ -783,7 +805,6 @@
     turnConfirmSelection = 0;
     statusFromCommand = false;
     isGameOver = false;
-    pendingGameResult = '';
     isEnemyAiRunning = false;
     isCombatResolving = false;
     pendingMove = null;
@@ -793,6 +814,7 @@
     gameOverOptionsReady = false;
     gameOverSelection = 0;
     explosionEffects.length = 0;
+    hitEffects.length = 0;
     cursor.x = startCursor.x;
     cursor.y = startCursor.y;
     camera.x = initialCamera.x;
@@ -830,25 +852,42 @@
   });
 
   storyWindow.addEventListener('click', (event) => {
-    if (!battleEventActive || storyStart.disabled || event.target.closest('button')) return;
+    if (battleEventActive || event.target.closest('button')) return;
+    if (!storySkip.hidden) {
+      revealStoryImmediately();
+    } else if (!storyStart.disabled) {
+      storyStart.click();
+    }
+  });
+
+  introEvent.addEventListener('click', () => {
+    if (!battleEventActive || storyStart.disabled) return;
     closeBattleMessage();
   });
 
   storySkip.addEventListener('click', () => {
     if (storySkip.hidden) return;
+    revealStoryImmediately();
+  });
+
+  function revealStoryImmediately() {
     skipStoryReveal = true;
     storyText.textContent = currentStoryText;
     storyText.scrollTop = storyText.scrollHeight;
     storySkip.hidden = true;
     storyStart.disabled = false;
-  });
+  }
 
   async function loadBattleOpening() {
     storyStart.disabled = true;
     try {
       const battleScript = await loadEventScript('Event/Battle_001.txt');
       applyBattleSetup(battleScript);
-      battleAttackEvents = parseBattleAttackRecords(battleScript);
+      const battleEvents = parseBattleTriggerRecords(battleScript);
+      battleAttackEvents = battleEvents.attacks;
+      battleDefenseEvents = battleEvents.defenses;
+      battleDefeatEvents = battleEvents.defeats;
+      battleEndEvent = battleEvents.end;
       const turnZeroMessages = parseBattleMessageRecords(extractEventBlock(battleScript, 'ターン　０'));
       if (!turnZeroMessages.length) throw new Error('ターン　０にＭＥＳがありません。');
       enterStage();
@@ -915,34 +954,47 @@
     closeBattleMessage();
   }
 
-  function parseBattleAttackEvents(source) {
-    const events = new Map();
-    const names = source.replace(/\r/g, '').split('\n')
-      .map((line) => line.trim())
-      .filter((line) => /^攻撃前[\t \u3000]+[\d０-９]+$/.test(line));
-    for (const name of names) {
-      const lines = extractEventBlock(source, name);
-      const condition = lines.find((line) => /^PC\d+[\t \u3000]+ＶＳ[\t \u3000]+ＥＮ$/.test(line.trim()));
-      const match = condition?.trim().match(/^PC(\d+)[\t \u3000]+ＶＳ[\t \u3000]+ＥＮ$/);
-      const message = parseBattleMessages(lines);
-      if (match && message) events.set('PC' + match[1].padStart(2, '0'), { name, message });
-    }
-    return events;
+  function normalizeBattleLine(line) {
+    return line.normalize('NFKC').trim();
   }
 
-  function parseBattleAttackRecords(source) {
-    const events = new Map();
+  function parseBattleTriggerRecords(source) {
+    const attacks = new Map();
+    const defenses = new Map();
+    const defeats = new Map();
+    let end = null;
     const names = source.replace(/\r/g, '').split('\n')
       .map((line) => line.trim())
-      .filter((line) => /^攻撃前[\t \u3000]+[\d０-９]+$/.test(line));
+      .filter((line) => /^(?:攻撃前|撃破)[\t \u3000]+[\d０-９]+$/.test(line));
+
     for (const name of names) {
+      const normalizedName = normalizeBattleLine(name);
       const lines = extractEventBlock(source, name);
-      const condition = lines.find((line) => /^PC\d+[\t \u3000]+ＶＳ[\t \u3000]+ＥＮ$/.test(line.trim()));
-      const match = condition?.trim().match(/^PC(\d+)[\t \u3000]+ＶＳ[\t \u3000]+ＥＮ$/);
       const messages = parseBattleMessageRecords(lines);
-      if (match && messages.length) events.set('PC' + match[1].padStart(2, '0'), { name, messages });
+      const attackName = normalizedName.match(/^攻撃前\s+(\d+)$/);
+      if (attackName) {
+        const condition = lines.map(normalizeBattleLine).find((line) => /^(?:PC\d+\s+VS\s+EN|EN\s+VS\s+PC\d+)$/.test(line));
+        const outgoing = condition?.match(/^PC(\d+)\s+VS\s+EN$/);
+        const incoming = condition?.match(/^EN\s+VS\s+PC(\d+)$/);
+        if (messages.length && outgoing) {
+          attacks.set(`PC${outgoing[1].padStart(2, '0')}`, { name, messages });
+        } else if (messages.length && incoming) {
+          defenses.set(`PC${incoming[1].padStart(2, '0')}`, { name, messages });
+        }
+        continue;
+      }
+
+      const defeatName = normalizedName.match(/^撃破\s+(\d+)$/);
+      if (defeatName?.[1] === '100') {
+        end = { name, lines };
+      } else if (defeatName) {
+        const condition = lines.map(normalizeBattleLine).find((line) => /^PC\d+$/.test(line));
+        const match = condition?.match(/^PC(\d+)$/);
+        if (match) defeats.set(`PC${match[1].padStart(2, '0')}`, { name, messages });
+      }
     }
-    return events;
+
+    return { attacks, defenses, defeats, end };
   }
 
   function enterStage() {
@@ -1008,17 +1060,125 @@
     };
 
     for (const line of lines) {
-      const nextCommand = line.trim().match(/^ＭＥＳ[\t \u3000]+(.+?)[\t \u3000]+(PC\d+)[\t \u3000]+([YN])$/);
+      const normalizedLine = normalizeBattleLine(line);
+      const nextCommand = normalizedLine.match(/^MES\s+(.+?)\s+(PC\d+)\s+([YN])$/i);
       if (nextCommand) {
         saveMessage();
         command = nextCommand;
         body = [];
-      } else if (command && line.trim() !== '｛' && line.trim() !== '｝') {
+      } else if (command && normalizedLine !== '{' && normalizedLine !== '}' && !isBattleDirective(normalizedLine)) {
         body.push(line.trim());
+      } else if (command && isBattleDirective(normalizedLine)) {
+        saveMessage();
+        command = null;
+        body = [];
       }
     }
     saveMessage();
     return messages;
+  }
+
+  function isBattleDirective(line) {
+    return /^(?:IF\s+PC\d+|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
+      /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|フラグ\s+ON\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
+  }
+
+  function extractBattleBraceBlock(lines, startIndex) {
+    let depth = 0;
+    const blockLines = [];
+    for (let index = startIndex; index < lines.length; index++) {
+      const line = normalizeBattleLine(lines[index]);
+      let content = '';
+      for (let characterIndex = 0; characterIndex < line.length; characterIndex++) {
+        const character = line[characterIndex];
+        if (character === '{') {
+          if (depth > 0) content += character;
+          depth++;
+        } else if (character === '}') {
+          depth--;
+          if (depth === 0) {
+            if (content.trim()) blockLines.push(content.trim());
+            return { lines: blockLines, endIndex: index, tail: line.slice(characterIndex + 1).trim() };
+          }
+          content += character;
+        } else if (depth > 0) {
+          content += character;
+        }
+      }
+      if (depth > 0 && content.trim()) blockLines.push(content.trim());
+    }
+    return null;
+  }
+
+  function findBattleConditionBlock(lines, condition) {
+    const index = lines.findIndex((line) => normalizeBattleLine(line) === condition);
+    return index < 0 ? null : extractBattleBraceBlock(lines, index + 1);
+  }
+
+  function selectBattleIfBranches(lines) {
+    const selectedLines = [];
+    for (let index = 0; index < lines.length; index++) {
+      const condition = normalizeBattleLine(lines[index]).match(/^IF\s+(PC\d+)$/i);
+      if (!condition) {
+        selectedLines.push(lines[index]);
+        continue;
+      }
+
+      const thenBlock = extractBattleBraceBlock(lines, index + 1);
+      if (!thenBlock) continue;
+      let elseIndex = thenBlock.endIndex + 1;
+      let hasElse = /^else$/i.test(thenBlock.tail);
+      if (!hasElse && normalizeBattleLine(lines[elseIndex] ?? '').toLowerCase() === 'else') {
+        hasElse = true;
+        elseIndex++;
+      }
+      const elseBlock = hasElse ? extractBattleBraceBlock(lines, elseIndex) : null;
+      const unitId = condition[1].toUpperCase().replace(/(\d+)/, (_, number) => number.padStart(2, '0'));
+      const unitIsAlive = units.some((unit) => unit.id === unitId);
+      const chosen = unitIsAlive ? thenBlock : elseBlock;
+      if (chosen) selectedLines.push(...selectBattleIfBranches(chosen.lines));
+      index = (elseBlock ?? thenBlock).endIndex;
+    }
+    return selectedLines;
+  }
+
+  async function runBattleAttackEvent(attacker, target) {
+    const event = attacker.side === 'player'
+      ? battleAttackEvents.get(attacker.id)
+      : battleDefenseEvents.get(target.id);
+    if (!event || completedBattleEvents.has(event.name)) return;
+    completedBattleEvents.add(event.name);
+    await playBattleMessages(event.messages);
+  }
+
+  async function runBattleDefeatEvent(unit) {
+    const event = battleDefeatEvents.get(unit.id);
+    if (!event || completedBattleEvents.has(event.name)) return;
+    completedBattleEvents.add(event.name);
+    await playBattleMessages(event.messages);
+  }
+
+  async function resolveBattleEndEvent() {
+    const playersRemaining = units.some((unit) => unit.side === 'player');
+    const enemiesRemaining = units.some((unit) => unit.side === 'enemy');
+    if (playersRemaining && enemiesRemaining) return;
+
+    if (battleEndEvent && completedBattleEvents.has(battleEndEvent.name)) return;
+    if (battleEndEvent) completedBattleEvents.add(battleEndEvent.name);
+
+    if (!playersRemaining) {
+      finishGame('ゲームオーバー');
+      return;
+    }
+
+    if (!enemiesRemaining) {
+      const clearBlock = battleEndEvent && findBattleConditionBlock(battleEndEvent.lines, 'ALL EN');
+      const clearLines = clearBlock ? selectBattleIfBranches(clearBlock.lines) : [];
+      const messages = parseBattleMessageRecords(clearLines);
+      if (messages.length) await playBattleMessages(messages);
+      eventFlags.add('Battle_001');
+      finishGame('ステージクリア');
+    }
   }
 
   function applyBattleSetup(source) {
@@ -1284,12 +1444,30 @@
 
   function findOpponentInRange(unit) {
     return units
-      .filter((candidate) => candidate.side !== unit.side && isWithinAttackRange(unit, manhattanDistance(unit, candidate)))
-      .sort((a, b) => manhattanDistance(unit, a) - manhattanDistance(unit, b))[0] ?? null;
+      .filter((candidate) => candidate.side !== unit.side && isWithinAttackRange(unit, unitDistance(unit, candidate)))
+      .sort((a, b) => unitDistance(unit, a) - unitDistance(unit, b))[0] ?? null;
   }
 
   function manhattanDistance(a, b) {
     return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  }
+
+  function distanceFromUnitToTile(unit, x, y) {
+    const { width, height } = getFootprintSize(unit);
+    const dx = Math.max(unit.x - x, 0, x - (unit.x + width - 1));
+    const dy = Math.max(unit.y - y, 0, y - (unit.y + height - 1));
+    return dx + dy;
+  }
+
+  function unitDistance(a, b) {
+    const footprint = getFootprintSize(b);
+    let minimum = Infinity;
+    for (let row = 0; row < footprint.height; row++) {
+      for (let column = 0; column < footprint.width; column++) {
+        minimum = Math.min(minimum, distanceFromUnitToTile(a, b.x + column, b.y + row));
+      }
+    }
+    return minimum;
   }
 
   function isWithinAttackRange(unit, distance) {
@@ -1301,7 +1479,7 @@
     const candidates = [...distances.entries()]
       .map(([key, distance]) => {
         const [x, y] = key.split(',').map(Number);
-        const targetDistance = Math.abs(x - target.x) + Math.abs(y - target.y);
+        const targetDistance = distanceFromUnitToTile(target, x, y);
         const remaining = targetDistance < unit.minAttackRange
           ? unit.minAttackRange - targetDistance
           : targetDistance > unit.attackRange ? targetDistance - unit.attackRange : 0;
@@ -1311,7 +1489,7 @@
         !isUnitPositionBlocked(unit, tile.x, tile.y))
       .sort((a, b) => a.remaining - b.remaining || a.distance - b.distance);
     const best = candidates[0];
-    const currentDistance = manhattanDistance(unit, target);
+    const currentDistance = unitDistance(unit, target);
     const currentRemaining = currentDistance < unit.minAttackRange
       ? unit.minAttackRange - currentDistance
       : currentDistance > unit.attackRange ? currentDistance - unit.attackRange : 0;
@@ -1359,23 +1537,20 @@
 
   async function tryAttackTarget(target) {
     if (!selectedUnit || rangeMode !== 'attack' || target.side === selectedUnit.side) return false;
-    const distance = Math.abs(target.x - selectedUnit.x) + Math.abs(target.y - selectedUnit.y);
+    const distance = unitDistance(selectedUnit, target);
     if (!isWithinAttackRange(selectedUnit, distance)) return false;
 
     const attacker = selectedUnit;
-    const attackEvent = battleAttackEvents.get(attacker.id);
-    if (attackEvent && !completedBattleEvents.has(attackEvent.name)) {
-      completedBattleEvents.add(attackEvent.name);
-      await playBattleMessages(attackEvent.messages);
-    }
     isCombatResolving = true;
     combatTarget = target;
     pendingMove = null;
     rangeMode = null;
     cursor.x = target.x;
     cursor.y = target.y;
-    attacker.attackUsed = true;
     try {
+      await runBattleAttackEvent(attacker, target);
+      if (isGameOver) return false;
+      attacker.attackUsed = true;
       attackMessage.hidden = true;
       await jumpUnit(attacker);
       const attackSound = playSe(getAttackSe(attacker));
@@ -1388,6 +1563,7 @@
         }, 500);
       }
       await attackSound;
+      await startHitEffect(attacker, target);
 
       const roll = Math.floor(Math.random() * 10);
       const hitMargin = roll - target.evasion + attacker.hitBonus;
@@ -1405,11 +1581,12 @@
         await shakeUnit(target);
         await animateHpCountdown(target, previousHp, target.hp);
         if (defeated) {
+          await runBattleDefeatEvent(target);
           const explosionDone = startExplosion(target);
           units.splice(units.indexOf(target), 1);
           const deathSe = target.side === 'player' ? 'dead_pc.mp3' : 'dead_en.mp3';
           await Promise.all([explosionDone, playSe(deathSe)]);
-          checkGameEnd();
+          await resolveBattleEndEvent();
         }
       } else {
         showAttackMessage(`${attacker.id} → ${target.id}：回避！`);
@@ -1513,13 +1690,49 @@
     });
   }
 
-  function checkGameEnd() {
-    const playerCount = units.filter((unit) => unit.side === 'player').length;
-    const enemyCount = units.filter((unit) => unit.side === 'enemy').length;
-    const result = enemyCount === 0 ? 'ステージクリア' : playerCount === 0 ? 'ゲームオーバー' : '';
-    if (!result) return;
-    if (explosionEffects.length) pendingGameResult = result;
-    else finishGame(result);
+  function getHitEffectImage(attacker) {
+    if (attacker.side === 'enemy') return hitEffectImages.slash;
+    if (attacker.id === 'PC02') return hitEffectImages.shot3;
+    if (attacker.id === 'PC01') return hitEffectImages.shot1Small;
+    return hitEffectImages.shot1;
+  }
+
+  async function startHitEffect(attacker, target) {
+    const image = getHitEffectImage(attacker);
+    if (!image.complete) {
+      await new Promise((resolve) => {
+        image.addEventListener('load', resolve, { once: true });
+        image.addEventListener('error', resolve, { once: true });
+      });
+    }
+    if (!image.naturalWidth || !image.naturalHeight) return;
+
+    const targetWidth = target.spriteWidth ?? TILE_SIZE;
+    const targetHeight = target.spriteHeight ?? TILE_SIZE;
+    const effectSize = Math.max(TILE_SIZE, targetWidth, targetHeight);
+    const effect = {
+      image,
+      x: target.x + targetWidth / TILE_SIZE / 2,
+      y: target.y + targetHeight / TILE_SIZE / 2,
+      width: effectSize,
+      height: effectSize,
+      startedAt: performance.now(),
+    };
+    hitEffects.push(effect);
+
+    return new Promise((resolve) => {
+      function animate(now) {
+        if (now - effect.startedAt >= hitEffectFrameDuration * hitEffectFrameCount) {
+          hitEffects.splice(hitEffects.indexOf(effect), 1);
+          draw();
+          resolve();
+          return;
+        }
+        draw();
+        requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);
+    });
   }
 
   function startExplosion(unit) {
@@ -1531,11 +1744,6 @@
         if (now - effect.startedAt >= explosionFrameDuration * explosionFrameCount) {
           explosionEffects.splice(explosionEffects.indexOf(effect), 1);
           draw();
-          if (!explosionEffects.length && pendingGameResult) {
-            const result = pendingGameResult;
-            pendingGameResult = '';
-            finishGame(result);
-          }
           resolve();
           return;
         }
@@ -1599,7 +1807,7 @@
     if (unit.side !== currentSide || unit.ended || unit.attackUsed) return false;
     const targetInRange = units.some((target) =>
       target.side !== unit.side &&
-      isWithinAttackRange(unit, Math.abs(target.x - unit.x) + Math.abs(target.y - unit.y))
+      isWithinAttackRange(unit, unitDistance(unit, target))
     );
     if (!targetInRange) return false;
 
@@ -2040,7 +2248,7 @@
           ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
         }
         const inMoveRange = moveRangeTiles?.has(`${mapX},${mapY}`);
-        const attackDistance = attackRangeUnit ? Math.abs(mapX - attackRangeUnit.x) + Math.abs(mapY - attackRangeUnit.y) : 0;
+        const attackDistance = attackRangeUnit ? distanceFromUnitToTile(attackRangeUnit, mapX, mapY) : 0;
         const inAttackRange = attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance);
         if (inMoveRange || inAttackRange) {
           ctx.fillStyle = inAttackRange
@@ -2143,6 +2351,26 @@
       }
     }
 
+    for (const effect of hitEffects) {
+      const frame = Math.min(hitEffectFrameCount - 1, Math.floor((performance.now() - effect.startedAt) / hitEffectFrameDuration));
+      const frameWidth = effect.image.naturalWidth / 4;
+      const frameHeight = effect.image.naturalHeight / 2;
+      const sourceX = (frame % 4) * frameWidth;
+      const sourceY = Math.floor(frame / 4) * frameHeight;
+      const screenX = (effect.x - camera.x) * TILE_SIZE - effect.width / 2;
+      const screenY = (effect.y - camera.y) * TILE_SIZE - effect.height / 2;
+      if (screenX < -effect.width || screenX > VIEW_PIXEL_WIDTH || screenY < -effect.height || screenY > VIEW_PIXEL_HEIGHT) continue;
+
+      ctx.save();
+      // The supplied sheets number each frame in the upper-left; hide these guide labels.
+      ctx.beginPath();
+      ctx.rect(screenX, screenY, effect.width, effect.height);
+      ctx.rect(screenX + effect.width * 0.07, screenY + effect.height * 0.04, effect.width * 0.16, effect.height * 0.16);
+      ctx.clip('evenodd');
+      ctx.drawImage(effect.image, sourceX, sourceY, frameWidth, frameHeight, screenX, screenY, effect.width, effect.height);
+      ctx.restore();
+    }
+
     for (const effect of explosionEffects) {
       const frame = Math.min(explosionFrameCount - 1, Math.floor((performance.now() - effect.startedAt) / explosionFrameDuration));
       const screenX = (effect.x - camera.x) * TILE_SIZE;
@@ -2191,7 +2419,7 @@
     const cursorIsAttackTarget = cursorUnit && (
       combatTarget === cursorUnit ||
       (rangeMode === 'attack' && selectedUnit && cursorUnit.side !== selectedUnit.side &&
-        isWithinAttackRange(selectedUnit, Math.abs(cursorUnit.x - selectedUnit.x) + Math.abs(cursorUnit.y - selectedUnit.y))) ||
+        isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, cursorUnit))) ||
       (enemyRangePreview?.mode === 'attack' && enemyRangePreview.target === cursorUnit)
     );
     const cursorColor = cursorIsAttackTarget ? '#f04444' : '#f1d978';

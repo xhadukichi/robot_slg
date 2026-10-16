@@ -92,7 +92,7 @@ body {
 .intro-event[hidden] { display: none; }
 .intro-event.fade-out { opacity: 0; }
 .intro-event > img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
-.intro-event.battle-event { background: transparent; pointer-events: none; }
+.intro-event.battle-event { background: transparent; pointer-events: auto; }
 .intro-event.battle-event > img { display: none; }
 .intro-event.battle-event .story-window { pointer-events: auto; }
 .story-speaker:empty { display: none; }
