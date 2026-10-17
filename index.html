@@ -50,6 +50,21 @@
           <button type="button" data-action="status">ステータス</button>
           <button type="button" data-action="end">行動終了</button>
         </div>
+        <div id="attack-choice-command" class="unit-command" hidden>
+          <button type="button" data-action="normal-attack">通常攻撃</button>
+          <button type="button" data-action="precision-attack">精密攻撃</button>
+          <button type="button" data-action="hate">ヘイト</button>
+        </div>
+        <div id="precision-confirm-command" class="unit-command precision-confirm-command" hidden>
+          <div class="precision-confirm-message">移動を捨てて命中精度を向上させます</div>
+          <button type="button" data-action="confirm-precision">はい</button>
+          <button type="button" data-action="cancel-precision">キャンセル</button>
+        </div>
+        <div id="hate-confirm-command" class="unit-command precision-confirm-command" hidden>
+          <div class="precision-confirm-message">敵の注意を自分にひきつけますか？</div>
+          <button type="button" data-action="confirm-hate">はい</button>
+          <button type="button" data-action="cancel-hate">キャンセル</button>
+        </div>
         <div id="move-confirm-command" class="unit-command move-confirm-command" hidden>
           <button type="button" data-action="commit-move" class="selected">決定</button>
           <button type="button" data-action="cancel-move">キャンセル</button>

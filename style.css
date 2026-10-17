@@ -217,7 +217,8 @@ h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
 .map-frame {
   position: relative;
   width: 100%;
-  overflow: hidden;
+  overflow: visible;
+  margin-bottom: 18px;
   border: 1px solid #37463b;
   border-radius: 5px;
   background: #25382e;
@@ -260,9 +261,9 @@ h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
   border-radius: 8px;
   background: #d9d1a9d9;
 }
-.map-scrollbar-x { right: 20px; bottom: 4px; left: 4px; height: 12px; }
+.map-scrollbar-x { right: 20px; bottom: -16px; left: 4px; height: 12px; }
 .map-scrollbar-x span { top: 0; bottom: 0; }
-.map-scrollbar-y { top: 4px; right: 4px; bottom: 20px; width: 12px; }
+.map-scrollbar-y { top: 4px; right: -16px; bottom: 20px; width: 12px; }
 .map-scrollbar-y span { right: 0; left: 0; }
 
 .unit-command {
@@ -295,6 +296,14 @@ h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
   outline: none;
 }
 .unit-command button:disabled:hover { background: transparent; color: #f1d978; }
+.precision-confirm-command { min-width: 252px; }
+.precision-confirm-message {
+  padding: 8px 10px;
+  border-bottom: 1px solid #485343;
+  color: #f3ead0;
+  font: 600 13px/1.5 "Yu Gothic UI", Meiryo, sans-serif;
+  white-space: normal;
+}
 
 .unit-status {
   position: absolute;
@@ -520,5 +529,5 @@ canvas:focus-visible { box-shadow: inset 0 0 0 3px #e3cb75; }
   .game-over-options { gap: 6px; }
   .game-over-options button { min-height: 38px; font-size: 14px; }
   .map-scrollbar-x { right: 26px; height: 18px; }
-  .map-scrollbar-y { bottom: 26px; width: 18px; }
+  .map-scrollbar-y { right: -22px; bottom: 26px; width: 18px; }
 }

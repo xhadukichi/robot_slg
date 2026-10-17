@@ -17,6 +17,9 @@
   const passabilityLegend = document.querySelector('#passability-legend');
   const coordinates = document.querySelector('#coordinates');
   const unitCommand = document.querySelector('#unit-command');
+  const attackChoiceCommand = document.querySelector('#attack-choice-command');
+  const precisionConfirmCommand = document.querySelector('#precision-confirm-command');
+  const hateConfirmCommand = document.querySelector('#hate-confirm-command');
   const moveConfirmCommand = document.querySelector('#move-confirm-command');
   const unitStatus = document.querySelector('#unit-status');
   const emptyCommand = document.querySelector('#empty-command');
@@ -90,8 +93,8 @@
   ];
   const initialUnits = units.map((unit) => ({ ...unit }));
   const obstacles = [
-    { id: 'OBJ01', x: 9, y: 15, imageFile: 'obstacles_01.png', image: new Image() },
-    { id: 'OBJ02', x: 7, y: 10, imageFile: 'obstacles_01.png', image: new Image() },
+    { id: 'OBJ01', x: 9, y: 15, hp: 5, maxHp: 5, destructible: true, imageFile: 'obstacles_01.png', image: new Image() },
+    { id: 'OBJ02', x: 7, y: 10, hp: 5, maxHp: 5, destructible: true, imageFile: 'obstacles_01.png', image: new Image() },
     // { id: 'OBJ03', x: 10, y: 10, imageFile: 'obstacles_01.png', image: new Image() },
     // { id: 'OBJ04', x: 12, y: 10, imageFile: 'obstacles_01.png', image: new Image() },
     // { id: 'OBJ05', x: 5, y: 9, imageFile: 'obstacles_02.png', image: new Image() },
@@ -112,14 +115,21 @@
     '3,9', '4,9',
     '8,13', '12,13',
   ]);
+  const lineOfSightBlockedTiles = new Set();
   let currentSide = 'player';
   const sideTurnCounts = { player: 1, enemy: 1 };
   let selectedUnit = null;
   let combatTarget = null;
   let rangeMode = null;
   let enemyRangePreview = null;
+  let cursorEnemyPreview = null;
+  let cursorEnemyPreviewFrame = 0;
   let isUnitMoving = false;
   let menuSelectionIndex = 0;
+  let attackChoiceSelection = 0;
+  let precisionConfirmSelection = 0;
+  let hateConfirmSelection = 0;
+  let pendingPrecisionTarget = null;
   let moveConfirmSelection = 0;
   let attackMessageTimer = 0;
   let phaseAnnouncementTimer = 0;
@@ -214,13 +224,25 @@
     );
   }, { passive: false });
 
+  canvas.addEventListener('pointermove', (event) => {
+    if (pointerGesture?.dragging || rangeMode || isUnitMoving || isEnemyAiRunning || isCombatResolving) return;
+    const bounds = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / bounds.width;
+    const scaleY = canvas.height / bounds.height;
+    const mapX = Math.floor(camera.x + ((event.clientX - bounds.left) * scaleX) / TILE_SIZE);
+    const mapY = Math.floor(camera.y + ((event.clientY - bounds.top) * scaleY) / TILE_SIZE);
+    updateCursorEnemyPreview(getUnitAtPosition(mapX, mapY));
+  });
+
+  canvas.addEventListener('pointerleave', () => updateCursorEnemyPreview(null));
+
   canvas.addEventListener('click', (event) => {
     if (lastGestureDragged) {
       lastGestureDragged = false;
       event.preventDefault();
       return;
     }
-    if (battleEventActive || isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden) return;
+    if (battleEventActive || isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden || !attackChoiceCommand.hidden || !precisionConfirmCommand.hidden || !hateConfirmCommand.hidden) return;
     canvas.focus();
     emptyCommand.hidden = true;
     const bounds = canvas.getBoundingClientRect();
@@ -238,6 +260,24 @@
     const clickedObstacle = obstacles.find((obstacle) => obstacle.x === mapX && obstacle.y === mapY);
     if (rangeMode === 'move-confirm') return;
     const clickedDuringAction = rangeMode !== null;
+    if (rangeMode === 'precision-target') {
+      cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
+      cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
+      if (clickedUnit?.side === 'enemy' &&
+          isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, clickedUnit)) &&
+          hasLineOfSight(selectedUnit, clickedUnit)) {
+        showPrecisionConfirmation(clickedUnit);
+      }
+      scrollToCursor();
+      return;
+    }
+    if (rangeMode === 'hate') {
+      cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
+      cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
+      if (clickedUnit) tryHateTarget(clickedUnit);
+      scrollToCursor();
+      return;
+    }
     if (rangeMode === 'attack') {
       if (pendingMove?.unit === selectedUnit && clickedUnit === selectedUnit) {
         commitPendingMove();
@@ -245,6 +285,14 @@
       }
       cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
       cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
+      if (clickedObstacle?.destructible) {
+        if (isWithinAttackRange(selectedUnit, distanceFromUnitToTile(selectedUnit, mapX, mapY)) &&
+            hasLineOfSight(selectedUnit, clickedObstacle, clickedObstacle)) {
+          void tryAttackObstacle(clickedObstacle);
+        }
+        scrollToCursor();
+        return;
+      }
       const distance = selectedUnit
         ? clickedUnit && clickedUnit !== selectedUnit
           ? unitDistance(selectedUnit, clickedUnit)
@@ -253,7 +301,7 @@
       if (!selectedUnit || !isWithinAttackRange(selectedUnit, distance)) {
         if (pendingMove?.unit === selectedUnit) rollbackPendingMove();
         else rangeMode = null;
-      } else if (clickedUnit) {
+      } else if (clickedUnit && hasLineOfSight(selectedUnit, clickedUnit)) {
         tryAttackTarget(clickedUnit);
       }
       scrollToCursor();
@@ -321,6 +369,42 @@
     chooseUnitAction(event.target.closest('button')?.dataset.action);
   });
 
+  attackChoiceCommand.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (isCombatResolving || explosionEffects.length) return;
+    const action = event.target.closest('button')?.dataset.action;
+    if (action === 'normal-attack') startAttackSelection();
+    else if (action === 'precision-attack') startPrecisionTargetSelection();
+    else if (action === 'hate') showHateConfirmation();
+  });
+
+  precisionConfirmCommand.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (isCombatResolving || explosionEffects.length) return;
+    const action = event.target.closest('button')?.dataset.action;
+    if (action === 'confirm-precision') confirmPrecisionAttack();
+    else if (action === 'cancel-precision') {
+      precisionConfirmCommand.hidden = true;
+      pendingPrecisionTarget = null;
+      rangeMode = 'precision-target';
+      canvas.focus();
+      draw();
+    }
+  });
+
+  hateConfirmCommand.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (isCombatResolving || explosionEffects.length) return;
+    const action = event.target.closest('button')?.dataset.action;
+    if (action === 'confirm-hate') startHateTargetSelection();
+    else if (action === 'cancel-hate') {
+      hateConfirmCommand.hidden = true;
+      attackChoiceCommand.hidden = false;
+      canvas.focus();
+      draw();
+    }
+  });
+
   moveConfirmCommand.addEventListener('click', (event) => {
     event.stopPropagation();
     if (isCombatResolving || explosionEffects.length) return;
@@ -344,6 +428,10 @@
 
   function openUnitMenu(unit) {
     selectedUnit = unit;
+    pendingPrecisionTarget = null;
+    attackChoiceCommand.hidden = true;
+    precisionConfirmCommand.hidden = true;
+    hateConfirmCommand.hidden = true;
     moveConfirmCommand.hidden = true;
     cursor.x = unit.x;
     cursor.y = unit.y;
@@ -379,6 +467,9 @@
     if (selectedUnit.side !== currentSide || selectedUnit.ended) return;
     if (action === 'end') {
       unitCommand.hidden = true;
+      attackChoiceCommand.hidden = true;
+      precisionConfirmCommand.hidden = true;
+      hateConfirmCommand.hidden = true;
       moveConfirmCommand.hidden = true;
       rangeMode = null;
       if (pendingMove?.unit === selectedUnit) pendingMove = null;
@@ -387,10 +478,22 @@
       canvas.focus();
       return;
     }
-    if (action === 'move' && selectedUnit.moveUsed) return;
+    if (action === 'move' && (selectedUnit.moveRemaining ?? selectedUnit.moveRange) <= 0) return;
     if (action === 'attack' && selectedUnit.attackUsed) return;
     if (action !== 'move' && action !== 'attack') return;
     emptyCommand.hidden = true;
+    if (action === 'attack') {
+      unitCommand.hidden = true;
+      attackChoiceSelection = 0;
+      updateAttackChoiceSelection();
+      attackChoiceCommand.hidden = false;
+      canvas.focus();
+      draw();
+      return;
+    }
+    attackChoiceCommand.hidden = true;
+    precisionConfirmCommand.hidden = true;
+    hateConfirmCommand.hidden = true;
     rangeMode = action;
     unitCommand.hidden = true;
     moveConfirmCommand.hidden = true;
@@ -400,14 +503,136 @@
     canvas.focus();
   }
 
+  function startAttackSelection() {
+    if (!selectedUnit || selectedUnit.attackUsed) return;
+    attackChoiceCommand.hidden = true;
+    precisionConfirmCommand.hidden = true;
+    hateConfirmCommand.hidden = true;
+    rangeMode = 'attack';
+    unitCommand.hidden = true;
+    moveConfirmCommand.hidden = true;
+    cursor.x = selectedUnit.x;
+    cursor.y = selectedUnit.y;
+    scrollToCursor();
+    canvas.focus();
+  }
+
+  function startPrecisionTargetSelection() {
+    if (!selectedUnit || selectedUnit.attackUsed || selectedUnit.moveUsed ||
+        (selectedUnit.moveRemaining ?? selectedUnit.moveRange) < selectedUnit.moveRange) return;
+    attackChoiceCommand.hidden = true;
+    rangeMode = 'precision-target';
+    unitCommand.hidden = true;
+    cursor.x = selectedUnit.x;
+    cursor.y = selectedUnit.y;
+    scrollToCursor();
+    canvas.focus();
+  }
+
+  function showPrecisionConfirmation(target) {
+    if (!selectedUnit || !target || selectedUnit.attackUsed || selectedUnit.moveUsed ||
+        (selectedUnit.moveRemaining ?? selectedUnit.moveRange) < selectedUnit.moveRange || target.side !== 'enemy' ||
+        !isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, target)) ||
+        !hasLineOfSight(selectedUnit, target)) return;
+    pendingPrecisionTarget = target;
+    precisionConfirmSelection = 0;
+    updatePrecisionConfirmSelection();
+    precisionConfirmCommand.hidden = false;
+    canvas.focus();
+    draw();
+  }
+
+  function showHateConfirmation() {
+    if (!selectedUnit || selectedUnit.attackUsed) return;
+    attackChoiceCommand.hidden = true;
+    hateConfirmSelection = 0;
+    updateHateConfirmSelection();
+    hateConfirmCommand.hidden = false;
+    canvas.focus();
+    draw();
+  }
+
+  function updateHateConfirmSelection() {
+    hateConfirmCommand.querySelectorAll('button').forEach((button, index) => {
+      button.classList.toggle('selected', index === hateConfirmSelection);
+      button.setAttribute('aria-pressed', String(index === hateConfirmSelection));
+    });
+  }
+
+  function startHateTargetSelection() {
+    if (!selectedUnit || selectedUnit.attackUsed) return;
+    hateConfirmCommand.hidden = true;
+    rangeMode = 'hate';
+    unitCommand.hidden = true;
+    attackChoiceCommand.hidden = true;
+    precisionConfirmCommand.hidden = true;
+    cursor.x = selectedUnit.x;
+    cursor.y = selectedUnit.y;
+    scrollToCursor();
+    canvas.focus();
+  }
+
+  async function tryHateTarget(target) {
+    if (!selectedUnit || rangeMode !== 'hate' || target.side !== 'enemy' || unitDistance(selectedUnit, target) > 8) return false;
+    isCombatResolving = true;
+    target.hateTargetId = selectedUnit.id;
+    selectedUnit.attackUsed = true;
+    rangeMode = null;
+    try {
+      await playSe('whistle.mp3');
+      showAttackMessage('ヘイト成功！');
+      checkUnitCompletion(selectedUnit);
+      return true;
+    } finally {
+      isCombatResolving = false;
+      draw();
+    }
+  }
+
+  function confirmPrecisionAttack() {
+    const target = pendingPrecisionTarget;
+    if (!selectedUnit || !target || !units.includes(target) || selectedUnit.attackUsed || selectedUnit.moveUsed ||
+        !isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, target)) ||
+        (selectedUnit.moveRemaining ?? selectedUnit.moveRange) < selectedUnit.moveRange) return;
+    selectedUnit.moveRemaining = 0;
+    selectedUnit.moveUsed = true;
+    selectedUnit.precisionAttackBonus = 2;
+    updateMenuSelection();
+    pendingPrecisionTarget = null;
+    precisionConfirmCommand.hidden = true;
+    rangeMode = 'attack';
+    void tryAttackTarget(target);
+  }
+
+  function updateAttackChoiceSelection() {
+    const buttons = attackChoiceCommand.querySelectorAll('button');
+    const preciseUnavailable = selectedUnit &&
+      (selectedUnit.moveUsed || (selectedUnit.moveRemaining ?? selectedUnit.moveRange) < selectedUnit.moveRange);
+    if (preciseUnavailable && attackChoiceSelection === 1) attackChoiceSelection = 0;
+    buttons.forEach((button, index) => {
+      const unavailable = index === 1 && preciseUnavailable;
+      button.disabled = Boolean(unavailable);
+      button.classList.toggle('selected', index === attackChoiceSelection && !button.disabled);
+      button.setAttribute('aria-pressed', String(index === attackChoiceSelection));
+    });
+  }
+
+  function updatePrecisionConfirmSelection() {
+    precisionConfirmCommand.querySelectorAll('button').forEach((button, index) => {
+      button.classList.toggle('selected', index === precisionConfirmSelection);
+      button.setAttribute('aria-pressed', String(index === precisionConfirmSelection));
+    });
+  }
+
   function updateMenuSelection() {
     const buttons = unitCommand.querySelectorAll('button');
     if (selectedUnit) {
       const canAct = selectedUnit.side === currentSide && !selectedUnit.ended;
-      buttons[0].textContent = selectedUnit.moveUsed ? '移動済み' : selectedUnit.ended ? '移動せず終了' : '移動';
+      const remainingMove = selectedUnit.moveRemaining ?? selectedUnit.moveRange;
+      buttons[0].textContent = `移動(${remainingMove})`;
       buttons[1].textContent = selectedUnit.attackUsed ? '攻撃済み' : selectedUnit.ended ? '攻撃せず終了' : '攻撃';
       buttons[3].textContent = selectedUnit.ended ? '行動終了済み' : '行動終了';
-      buttons[0].disabled = !canAct || selectedUnit.moveUsed;
+      buttons[0].disabled = !canAct || remainingMove <= 0;
       buttons[1].disabled = !canAct || selectedUnit.attackUsed;
       buttons[2].disabled = false;
       buttons[3].disabled = !canAct;
@@ -788,6 +1013,7 @@
   function resetStageState() {
     window.clearTimeout(attackMessageTimer);
     window.clearTimeout(phaseAnnouncementTimer);
+    pendingPrecisionTarget = null;
     if (cameraFrame) cancelAnimationFrame(cameraFrame);
     cameraFrame = 0;
     units.splice(0, units.length, ...initialUnits.map((unit) => ({ ...unit })));
@@ -822,6 +1048,10 @@
     cameraTarget.x = initialCamera.x;
     cameraTarget.y = initialCamera.y;
     unitCommand.hidden = true;
+    attackChoiceCommand.hidden = true;
+    precisionConfirmCommand.hidden = true;
+    hateConfirmCommand.hidden = true;
+    hateConfirmCommand.hidden = true;
     unitStatus.hidden = true;
     emptyCommand.hidden = true;
     turnConfirm.hidden = true;
@@ -1183,16 +1413,24 @@
 
   function applyBattleSetup(source) {
     const setupLines = extractEventBlock(source, '初期配置');
-    const coordinatePattern = /^\s*(PC\d+|EN\d+|OBJ\d+)\s*:\s*(.+?)\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*$/;
+    const coordinatePattern = /^\s*(PC\d+|EN\d+|OBJ\d+)\s*:\s*(.+?)\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*(?::\s*HP\s*(\d+)|\s+HP\s*(\d+))?\s*$/i;
     const configuredObstacles = [];
 
     for (const line of setupLines) {
       const match = line.match(coordinatePattern);
       if (!match) continue;
-      const [, id, imageFile, x, y] = match;
+      const [, id, imageFile, x, y, hpWithColon, hpWithSpace] = match;
       const position = { x: Number(x) - 1, y: Number(y) - 1 };
       if (id.startsWith('OBJ')) {
-        configuredObstacles.push({ id, ...position, imageFile: imageFile.trim(), image: new Image() });
+        const objectHp = hpWithColon ?? hpWithSpace;
+        const destructible = objectHp !== undefined;
+        configuredObstacles.push({
+          id,
+          ...position,
+          ...(destructible ? { hp: Number(objectHp), maxHp: Number(objectHp), destructible: true } : {}),
+          imageFile: imageFile.trim(),
+          image: new Image(),
+        });
         continue;
       }
 
@@ -1202,6 +1440,8 @@
       unit.y = position.y;
       unit.imageFile = imageFile.trim();
       unit.moveUsed = false;
+      unit.moveRemaining = unit.moveRange;
+      unit.precisionAttackBonus = 0;
       unit.attackUsed = false;
       unit.ended = false;
     }
@@ -1217,14 +1457,19 @@
     initialUnits.splice(0, initialUnits.length, ...units.map((unit) => ({ ...unit })));
 
     impassableTiles.clear();
+    lineOfSightBlockedTiles.clear();
     let readingTerrain = false;
+    let terrainBlocksLineOfSight = false;
     for (const line of setupLines) {
       const trimmed = line.trim();
-      if (trimmed === '湖' || trimmed === '岩') { readingTerrain = true; continue; }
+      if (trimmed === '岩') { readingTerrain = true; terrainBlocksLineOfSight = true; continue; }
+      if (trimmed === '湖' || trimmed === '木') { readingTerrain = true; terrainBlocksLineOfSight = false; continue; }
       if (trimmed.startsWith('開始カーソル') || coordinatePattern.test(line)) readingTerrain = false;
       if (!readingTerrain) continue;
       for (const match of line.matchAll(/[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]/g)) {
-        impassableTiles.add(`${Number(match[1]) - 1},${Number(match[2]) - 1}`);
+        const tile = `${Number(match[1]) - 1},${Number(match[2]) - 1}`;
+        impassableTiles.add(tile);
+        if (terrainBlocksLineOfSight) lineOfSightBlockedTiles.add(tile);
       }
     }
 
@@ -1320,6 +1565,8 @@
     for (const unit of units) {
       if (unit.side === currentSide) {
         unit.moveUsed = false;
+        unit.moveRemaining = unit.moveRange;
+        unit.precisionAttackBonus = 0;
         unit.attackUsed = false;
         unit.ended = false;
       }
@@ -1356,39 +1603,72 @@
       scrollToCursor();
       await wait(400);
 
-      const target = findNearestOpponent(enemy);
+      let preferredHateTarget = null;
+      if (enemy.hateTargetId) {
+        preferredHateTarget = units.find((candidate) => candidate.id === enemy.hateTargetId && candidate.side === 'player') ?? null;
+        if (!preferredHateTarget || unitDistance(enemy, preferredHateTarget) > 8) {
+          enemy.hateTargetId = null;
+          preferredHateTarget = null;
+          showAttackMessage('ヘイト対象を見失った！', 1800);
+          await wait(900);
+        }
+      }
+      const target = preferredHateTarget ?? findNearestOpponent(enemy);
       if (target) {
         cursor.x = target.x;
         cursor.y = target.y;
         scrollToCursor();
         await wait(350);
 
-        let attackTarget = findOpponentInRange(enemy);
-        if (!attackTarget && !enemy.moveUsed) {
-          const destination = chooseApproachTile(enemy, target);
+        let attackTarget = findOpponentInRange(enemy, preferredHateTarget);
+        let obstacleTarget = null;
+        let approachTarget = target;
+        const firstBlocker = attackTarget ||
+          !isWithinAttackRange(enemy, unitDistance(enemy, target))
+          ? null
+          : getBlockingObstacle(enemy, target);
+        if (firstBlocker?.destructible) {
+          if (isWithinAttackRange(enemy, distanceFromUnitToTile(enemy, firstBlocker.x, firstBlocker.y))) {
+            obstacleTarget = firstBlocker;
+          } else {
+            approachTarget = firstBlocker;
+          }
+        }
+        if (!attackTarget && !obstacleTarget && !enemy.moveUsed) {
+          const destination = chooseApproachTileByPath(enemy, approachTarget, preferredHateTarget);
           if (destination) {
-            enemy.moveUsed = true;
+            const path = getMovePath(enemy, destination.x, destination.y);
             enemyRangePreview = { unit: enemy, mode: 'move' };
             draw();
             await wait(450);
-            await new Promise((resolve) => animateUnitMove(enemy, getMovePath(enemy, destination.x, destination.y), resolve));
+            await new Promise((resolve) => animateUnitMove(enemy, path, resolve));
+            enemy.moveRemaining = Math.max(0, (enemy.moveRemaining ?? enemy.moveRange) - Math.max(0, path.length - 1));
+            enemy.moveUsed = enemy.moveRemaining <= 0;
             enemyRangePreview = null;
             draw();
             cursor.x = target.x;
             cursor.y = target.y;
             scrollToCursor();
             await wait(250);
-            attackTarget = findOpponentInRange(enemy);
+            attackTarget = findOpponentInRange(enemy, preferredHateTarget);
+            const blockerAfterMove = attackTarget ||
+              !isWithinAttackRange(enemy, unitDistance(enemy, target))
+              ? null
+              : getBlockingObstacle(enemy, target);
+            if (blockerAfterMove?.destructible &&
+                isWithinAttackRange(enemy, distanceFromUnitToTile(enemy, blockerAfterMove.x, blockerAfterMove.y))) {
+              obstacleTarget = blockerAfterMove;
+            }
           }
         }
 
-        if (attackTarget && !enemy.attackUsed) {
+        if ((attackTarget || obstacleTarget) && !enemy.attackUsed) {
           cursor.x = enemy.x;
           cursor.y = enemy.y;
           scrollToCursor();
           await wait(250);
-          cursor.x = attackTarget.x;
-          cursor.y = attackTarget.y;
+          cursor.x = (obstacleTarget ?? attackTarget).x;
+          cursor.y = (obstacleTarget ?? attackTarget).y;
           scrollToCursor();
           await wait(350);
           selectedUnit = enemy;
@@ -1396,7 +1676,8 @@
           enemyRangePreview = { unit: enemy, mode: 'attack', target: attackTarget };
           draw();
           await wait(300);
-          await tryAttackTarget(attackTarget);
+          if (obstacleTarget) await tryAttackObstacle(obstacleTarget);
+          else await tryAttackTarget(attackTarget);
           await wait(300);
         }
       }
@@ -1418,6 +1699,8 @@
       for (const unit of units) {
         if (unit.side === currentSide) {
           unit.moveUsed = false;
+          unit.moveRemaining = unit.moveRange;
+          unit.precisionAttackBonus = 0;
           unit.attackUsed = false;
           unit.ended = false;
         }
@@ -1442,9 +1725,10 @@
       .sort((a, b) => manhattanDistance(unit, a) - manhattanDistance(unit, b))[0] ?? null;
   }
 
-  function findOpponentInRange(unit) {
+  function findOpponentInRange(unit, preferredTarget = null) {
     return units
-      .filter((candidate) => candidate.side !== unit.side && isWithinAttackRange(unit, unitDistance(unit, candidate)))
+      .filter((candidate) => candidate.side !== unit.side && (!preferredTarget || candidate === preferredTarget) &&
+        isWithinAttackRange(unit, unitDistance(unit, candidate)) && hasLineOfSight(unit, candidate))
       .sort((a, b) => unitDistance(unit, a) - unitDistance(unit, b))[0] ?? null;
   }
 
@@ -1470,31 +1754,91 @@
     return minimum;
   }
 
+  function getLineTiles(from, to) {
+    const reverse = from.x > to.x || (from.x === to.x && from.y > to.y);
+    let x = reverse ? to.x : from.x;
+    let y = reverse ? to.y : from.y;
+    const endX = reverse ? from.x : to.x;
+    const endY = reverse ? from.y : to.y;
+    const dx = Math.abs(endX - x);
+    const dy = Math.abs(endY - y);
+    const sx = x < endX ? 1 : -1;
+    const sy = y < endY ? 1 : -1;
+    let error = dx - dy;
+    const tiles = [];
+    while (x !== endX || y !== endY) {
+      const doubledError = error * 2;
+      if (doubledError > -dy) { error -= dy; x += sx; }
+      if (doubledError < dx) { error += dx; y += sy; }
+      tiles.push({ x, y });
+    }
+    return reverse ? tiles.reverse() : tiles;
+  }
+
+  function getLineBlocker(from, to, targetObstacle = null) {
+    for (const { x, y } of getLineTiles(from, to).slice(0, -1)) {
+      const obstacle = obstacles.find((candidate) =>
+        candidate.x === x && candidate.y === y && candidate !== targetObstacle
+      );
+      if (obstacle) return obstacle;
+      if (lineOfSightBlockedTiles.has(`${x},${y}`)) return { x, y, destructible: false, terrain: 'rock' };
+    }
+    return null;
+  }
+
+  function getBlockingObstacle(attacker, target, targetObstacle = null) {
+    const attackerSize = getFootprintSize(attacker);
+    const targetSize = getFootprintSize(target);
+    let firstBlocker = null;
+    for (let attackerY = 0; attackerY < attackerSize.height; attackerY++) {
+      for (let attackerX = 0; attackerX < attackerSize.width; attackerX++) {
+        const from = { x: attacker.x + attackerX, y: attacker.y + attackerY };
+        for (let targetY = 0; targetY < targetSize.height; targetY++) {
+          for (let targetX = 0; targetX < targetSize.width; targetX++) {
+            const to = { x: target.x + targetX, y: target.y + targetY };
+            const blocker = getLineBlocker(from, to, targetObstacle);
+            if (!blocker) return null;
+            firstBlocker ??= blocker;
+          }
+        }
+      }
+    }
+    return firstBlocker;
+  }
+
+  function hasLineOfSight(attacker, target, targetObstacle = null) {
+    return !getBlockingObstacle(attacker, target, targetObstacle);
+  }
+
   function isWithinAttackRange(unit, distance) {
     return distance >= unit.minAttackRange && distance <= unit.attackRange;
   }
 
-  function chooseApproachTile(unit, target) {
-    const distances = getMoveDistances(unit);
+  function chooseApproachTileByPath(unit, target, leashTarget = null) {
+    const remainingMove = unit.moveRemaining ?? unit.moveRange;
+    const staysWithinHateRange = leashTarget
+      ? (x, y) => unitDistance({ ...unit, x, y }, leashTarget) <= 8
+      : null;
+    const distances = getMoveDistances(unit, MAP_WIDTH * MAP_HEIGHT, staysWithinHateRange);
     const candidates = [...distances.entries()]
       .map(([key, distance]) => {
         const [x, y] = key.split(',').map(Number);
-        const targetDistance = distanceFromUnitToTile(target, x, y);
-        const remaining = targetDistance < unit.minAttackRange
+        const targetDistance = unitDistance({ ...unit, x, y }, target);
+        const rangeGap = targetDistance < unit.minAttackRange
           ? unit.minAttackRange - targetDistance
           : targetDistance > unit.attackRange ? targetDistance - unit.attackRange : 0;
-        return { x, y, distance, remaining };
+        const lineClear = hasLineOfSight({ ...unit, x, y }, target);
+        return { x, y, distance, rangeGap, lineClear };
       })
-      .filter((tile) => tile.distance > 0 && tile.distance <= unit.moveRange &&
-        !isUnitPositionBlocked(unit, tile.x, tile.y))
-      .sort((a, b) => a.remaining - b.remaining || a.distance - b.distance);
-    const best = candidates[0];
-    const currentDistance = unitDistance(unit, target);
-    const currentRemaining = currentDistance < unit.minAttackRange
-      ? unit.minAttackRange - currentDistance
-      : currentDistance > unit.attackRange ? currentDistance - unit.attackRange : 0;
-    if (!best || best.remaining >= currentRemaining) return null;
-    return best;
+      .filter((tile) => tile.distance > 0 && !isUnitPositionBlocked(unit, tile.x, tile.y));
+    candidates.sort((a, b) => Number(b.lineClear) - Number(a.lineClear) || a.rangeGap - b.rangeGap || a.distance - b.distance);
+    const destinationGoal = candidates.find((tile) => tile.rangeGap === 0) ?? candidates[0];
+    if (!destinationGoal) return null;
+
+    const path = getMovePath(unit, destinationGoal.x, destinationGoal.y, staysWithinHateRange);
+    if (path.length < 2) return null;
+    const step = path[Math.min(remainingMove, path.length - 1)];
+    return { x: step.x, y: step.y };
   }
 
   function activateCurrentTile() {
@@ -1509,14 +1853,42 @@
       chooseUnitAction(action);
       return;
     }
+    if (!attackChoiceCommand.hidden) {
+      attackChoiceCommand.querySelectorAll('button')[attackChoiceSelection]?.click();
+      return;
+    }
+    if (!hateConfirmCommand.hidden) {
+      hateConfirmCommand.querySelectorAll('button')[hateConfirmSelection]?.click();
+      return;
+    }
+    if (!precisionConfirmCommand.hidden) {
+      precisionConfirmCommand.querySelectorAll('button')[precisionConfirmSelection]?.click();
+      return;
+    }
 
     const unit = getUnitAtPosition(cursor.x, cursor.y);
+    if (rangeMode === 'precision-target') {
+      if (unit?.side === 'enemy' && isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, unit)) &&
+          hasLineOfSight(selectedUnit, unit)) {
+        showPrecisionConfirmation(unit);
+      }
+      return;
+    }
+    if (rangeMode === 'hate') {
+      if (unit) tryHateTarget(unit);
+      return;
+    }
     if (rangeMode === 'attack') {
       if (pendingMove?.unit === selectedUnit && unit === selectedUnit) {
         commitPendingMove();
         return;
       }
-      if (unit) tryAttackTarget(unit);
+      const obstacle = obstacles.find((candidate) => candidate.x === cursor.x && candidate.y === cursor.y);
+      if (obstacle?.destructible &&
+          isWithinAttackRange(selectedUnit, distanceFromUnitToTile(selectedUnit, obstacle.x, obstacle.y)) &&
+          hasLineOfSight(selectedUnit, obstacle, obstacle)) {
+        void tryAttackObstacle(obstacle);
+      } else if (unit && hasLineOfSight(selectedUnit, unit)) tryAttackTarget(unit);
       return;
     }
     if (rangeMode === 'move-confirm') {
@@ -1538,7 +1910,7 @@
   async function tryAttackTarget(target) {
     if (!selectedUnit || rangeMode !== 'attack' || target.side === selectedUnit.side) return false;
     const distance = unitDistance(selectedUnit, target);
-    if (!isWithinAttackRange(selectedUnit, distance)) return false;
+    if (!isWithinAttackRange(selectedUnit, distance) || !hasLineOfSight(selectedUnit, target)) return false;
 
     const attacker = selectedUnit;
     isCombatResolving = true;
@@ -1566,7 +1938,8 @@
       await startHitEffect(attacker, target);
 
       const roll = Math.floor(Math.random() * 10);
-      const hitMargin = roll - target.evasion + attacker.hitBonus;
+      const hitMargin = roll - target.evasion + attacker.hitBonus + (attacker.precisionAttackBonus ?? 0);
+      attacker.precisionAttackBonus = 0;
       if (hitMargin >= 1) {
         const previousHp = target.hp;
         target.hp -= attacker.attackPower;
@@ -1594,6 +1967,47 @@
 
       checkUnitCompletion(attacker);
       scrollToCursor();
+      return true;
+    } finally {
+      isCombatResolving = false;
+      combatTarget = null;
+      draw();
+    }
+  }
+
+  async function tryAttackObstacle(obstacle) {
+    if (!selectedUnit || rangeMode !== 'attack' || !obstacle.destructible ||
+        !obstacles.includes(obstacle) ||
+        !isWithinAttackRange(selectedUnit, distanceFromUnitToTile(selectedUnit, obstacle.x, obstacle.y)) ||
+        !hasLineOfSight(selectedUnit, obstacle, obstacle)) return false;
+
+    const attacker = selectedUnit;
+    isCombatResolving = true;
+    combatTarget = obstacle;
+    pendingMove = null;
+    rangeMode = null;
+    cursor.x = obstacle.x;
+    cursor.y = obstacle.y;
+    try {
+      attacker.attackUsed = true;
+      await jumpUnit(attacker);
+      await playSe(getAttackSe(attacker));
+      await startHitEffect(attacker, obstacle);
+
+      const hitMargin = Math.floor(Math.random() * 10) + attacker.hitBonus - (obstacle.evasion ?? 0);
+      if (hitMargin >= 1) {
+        const previousHp = obstacle.hp;
+        obstacle.hp = Math.max(0, obstacle.hp - attacker.attackPower);
+        showAttackMessage(obstacle.hp === 0
+          ? `${attacker.id} → ${obstacle.id}：破壊！`
+          : `${attacker.id} → ${obstacle.id}：命中！ -${attacker.attackPower}`);
+        await shakeUnit(obstacle);
+        await animateHpCountdown(obstacle, previousHp, obstacle.hp);
+        if (obstacle.hp <= 0) obstacles.splice(obstacles.indexOf(obstacle), 1);
+      } else {
+        showAttackMessage(`${attacker.id} → ${obstacle.id}：回避！`);
+      }
+      checkUnitCompletion(attacker);
       return true;
     } finally {
       isCombatResolving = false;
@@ -1791,11 +2205,19 @@
   function moveSelectedUnitTo(x, y) {
     if (!selectedUnit || rangeMode !== 'move') return;
     const distance = getMoveDistances(selectedUnit).get(`${x},${y}`);
-    if (distance === undefined || distance > selectedUnit.moveRange || isUnitPositionBlocked(selectedUnit, x, y)) return;
+    const remainingMove = selectedUnit.moveRemaining ?? selectedUnit.moveRange;
+    if (distance === undefined || distance > remainingMove || isUnitPositionBlocked(selectedUnit, x, y)) return;
     const path = getMovePath(selectedUnit, x, y);
     if (path.length < 2) return;
-    pendingMove = { unit: selectedUnit, x: selectedUnit.x, y: selectedUnit.y };
-    selectedUnit.moveUsed = true;
+    pendingMove = {
+      unit: selectedUnit,
+      x: selectedUnit.x,
+      y: selectedUnit.y,
+      moveRemaining: remainingMove,
+      moveUsed: selectedUnit.moveUsed,
+    };
+    selectedUnit.moveRemaining = Math.max(0, remainingMove - (path.length - 1));
+    selectedUnit.moveUsed = selectedUnit.moveRemaining <= 0;
     rangeMode = null;
     moveConfirmCommand.hidden = true;
     emptyCommand.hidden = true;
@@ -1807,7 +2229,8 @@
     if (unit.side !== currentSide || unit.ended || unit.attackUsed) return false;
     const targetInRange = units.some((target) =>
       target.side !== unit.side &&
-      isWithinAttackRange(unit, unitDistance(unit, target))
+      isWithinAttackRange(unit, unitDistance(unit, target)) &&
+      hasLineOfSight(unit, target)
     );
     if (!targetInRange) return false;
 
@@ -1824,6 +2247,29 @@
   function cancelCurrentAction() {
     if (!emptyCommand.hidden) {
       emptyCommand.hidden = true;
+      canvas.focus();
+      draw();
+      return;
+    }
+    if (!hateConfirmCommand.hidden) {
+      hateConfirmCommand.hidden = true;
+      attackChoiceCommand.hidden = false;
+      canvas.focus();
+      draw();
+      return;
+    }
+    if (!precisionConfirmCommand.hidden) {
+      precisionConfirmCommand.hidden = true;
+      pendingPrecisionTarget = null;
+      rangeMode = 'precision-target';
+      canvas.focus();
+      draw();
+      return;
+    }
+    if (!attackChoiceCommand.hidden) {
+      attackChoiceCommand.hidden = true;
+      unitCommand.hidden = false;
+      updateMenuSelection();
       canvas.focus();
       draw();
       return;
@@ -1848,6 +2294,7 @@
       return;
     }
     if (rangeMode) {
+      if (rangeMode === 'precision-target') pendingPrecisionTarget = null;
       if (pendingMove?.unit === selectedUnit) {
         rollbackPendingMove();
         canvas.focus();
@@ -1865,12 +2312,13 @@
 
   function rollbackPendingMove() {
     if (!pendingMove) return;
-    const { unit, x, y } = pendingMove;
+    const { unit, x, y, moveRemaining } = pendingMove;
     unit.x = x;
     unit.y = y;
     delete unit.visualX;
     delete unit.visualY;
-    unit.moveUsed = false;
+    unit.moveRemaining = moveRemaining ?? unit.moveRange;
+    unit.moveUsed = unit.moveRemaining <= 0;
     pendingMove = null;
     moveConfirmCommand.hidden = true;
     selectedUnit = unit;
@@ -1925,7 +2373,7 @@
     return patch ? greens[variation] : ['#314538', '#34483b', '#364a3d', '#384c3f', '#3a4e41'][variation];
   }
 
-  function getMoveDistances(movingUnit) {
+  function getMoveDistances(movingUnit, maxDistance = movingUnit.moveRemaining ?? movingUnit.moveRange, isPositionAllowed = null) {
     const distances = new Map();
     const key = (x, y) => `${x},${y}`;
     const queue = [{ x: movingUnit.x, y: movingUnit.y }];
@@ -1934,13 +2382,14 @@
     for (let index = 0; index < queue.length; index++) {
       const current = queue[index];
       const nextDistance = distances.get(key(current.x, current.y)) + 1;
-      if (nextDistance > movingUnit.moveRange) continue;
+      if (nextDistance > maxDistance) continue;
 
       for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
         const x = current.x + dx;
         const y = current.y + dy;
         const nextKey = key(x, y);
         if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT || distances.has(nextKey)) continue;
+        if (isPositionAllowed && !isPositionAllowed(x, y)) continue;
 
         if (isUnitPositionBlocked(movingUnit, x, y)) continue;
         distances.set(nextKey, nextDistance);
@@ -1950,7 +2399,7 @@
     return distances;
   }
 
-  function getMovePath(movingUnit, targetX, targetY) {
+  function getMovePath(movingUnit, targetX, targetY, isPositionAllowed = null) {
     const key = (x, y) => `${x},${y}`;
     const startKey = key(movingUnit.x, movingUnit.y);
     const targetKey = key(targetX, targetY);
@@ -1964,6 +2413,7 @@
         const y = current.y + dy;
         const nextKey = key(x, y);
         if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT || previous.has(nextKey)) continue;
+        if (isPositionAllowed && !isPositionAllowed(x, y)) continue;
         if (isUnitPositionBlocked(movingUnit, x, y)) continue;
         previous.set(nextKey, key(current.x, current.y));
         queue.push({ x, y });
@@ -1999,6 +2449,27 @@
     }) ?? null;
   }
 
+  function updateCursorEnemyPreview(unit) {
+    const nextId = unit?.side === 'enemy' ? unit.id : null;
+    if (cursorEnemyPreview?.unitId === nextId) return;
+    if (!nextId) {
+      cursorEnemyPreview = null;
+      if (cursorEnemyPreviewFrame) cancelAnimationFrame(cursorEnemyPreviewFrame);
+      cursorEnemyPreviewFrame = 0;
+      return;
+    }
+    cursorEnemyPreview = { unitId: nextId, startedAt: performance.now() };
+    if (!cursorEnemyPreviewFrame) {
+      const animatePreview = () => {
+        cursorEnemyPreviewFrame = 0;
+        if (!cursorEnemyPreview || isGameOver) return;
+        draw();
+        cursorEnemyPreviewFrame = requestAnimationFrame(animatePreview);
+      };
+      cursorEnemyPreviewFrame = requestAnimationFrame(animatePreview);
+    }
+  }
+
   function isUnitPositionBlocked(unit, x, y) {
     const { width, height } = getFootprintSize(unit);
     if (x < 0 || y < 0 || x + width > MAP_WIDTH || y + height > MAP_HEIGHT) return true;
@@ -2018,11 +2489,11 @@
     });
   }
 
-  function getMoveRangeTiles(unit, distances) {
+  function getMoveRangeTiles(unit, distances, maxDistance = unit.moveRemaining ?? unit.moveRange) {
     const tiles = new Set();
     const footprint = getFootprintSize(unit);
     for (const [position, distance] of distances) {
-      if (distance === 0 || distance > unit.moveRange) continue;
+      if (distance === 0 || distance > maxDistance) continue;
       const [x, y] = position.split(',').map(Number);
       for (let offsetY = 0; offsetY < footprint.height; offsetY++) {
         for (let offsetX = 0; offsetX < footprint.width; offsetX++) {
@@ -2036,12 +2507,12 @@
   function getMoveAnchorForCell(unit, cellX, cellY, distances) {
     const clickedPosition = `${cellX},${cellY}`;
     const exactDistance = distances.get(clickedPosition);
-    if (exactDistance > 0 && exactDistance <= unit.moveRange) return { x: cellX, y: cellY };
+    if (exactDistance > 0 && exactDistance <= (unit.moveRemaining ?? unit.moveRange)) return { x: cellX, y: cellY };
 
     const footprint = getFootprintSize(unit);
     const candidates = [];
     for (const [position, distance] of distances) {
-      if (distance === 0 || distance > unit.moveRange) continue;
+      if (distance === 0 || distance > (unit.moveRemaining ?? unit.moveRange)) continue;
       const [x, y] = position.split(',').map(Number);
       if (cellX >= x && cellX < x + footprint.width && cellY >= y && cellY < y + footprint.height) {
         candidates.push({ x, y, distance, clickDistance: Math.abs(cellX - x) + Math.abs(cellY - y) });
@@ -2076,7 +2547,8 @@
         isUnitMoving = false;
         if (onComplete) onComplete();
         else if (!enterAttackModeIfTargetInRange(unit)) {
-          if (pendingMove?.unit === unit) showMoveConfirmation(unit);
+          if (pendingMove?.unit === unit && unit.moveRemaining > 0) commitPendingMove();
+          else if (pendingMove?.unit === unit) showMoveConfirmation(unit);
           else checkUnitCompletion(unit);
         }
         draw();
@@ -2212,14 +2684,53 @@
   function draw() {
     const showPassability = !emptyCommand.hidden;
     passabilityLegend.hidden = !showPassability;
-    const moveRangeUnit = enemyRangePreview?.mode === 'move'
+    const canShowCursorEnemyPreview = cursorEnemyPreview && !rangeMode &&
+      unitCommand.hidden && attackChoiceCommand.hidden && precisionConfirmCommand.hidden &&
+      hateConfirmCommand.hidden && moveConfirmCommand.hidden && !isEnemyAiRunning &&
+      !isCombatResolving && !battleEventActive;
+    const cursorPreviewUnit = canShowCursorEnemyPreview
+      ? units.find((unit) => unit.id === cursorEnemyPreview.unitId) ?? null
+      : null;
+    const cursorPreviewHateTarget = cursorPreviewUnit?.hateTargetId
+      ? units.find((unit) => unit.id === cursorPreviewUnit.hateTargetId && unit.side === 'player')
+      : null;
+    const cursorPreviewHasHate = Boolean(cursorPreviewUnit && cursorPreviewHateTarget &&
+      unitDistance(cursorPreviewUnit, cursorPreviewHateTarget) <= 8);
+    const cursorPreviewCycleLength = cursorPreviewHasHate ? 3000 : 2000;
+    const cursorPreviewElapsed = cursorEnemyPreview
+      ? (performance.now() - cursorEnemyPreview.startedAt) % cursorPreviewCycleLength
+      : 0;
+    const cursorPreviewStage = Math.floor(cursorPreviewElapsed / 1000) % (cursorPreviewHasHate ? 3 : 2);
+    const cursorPreviewPhase = cursorPreviewElapsed % 1000;
+    const cursorPreviewAlpha = cursorPreviewPhase < 300
+      ? cursorPreviewPhase / 300
+      : cursorPreviewPhase < 600 ? 1
+      : cursorPreviewPhase < 900 ? (900 - cursorPreviewPhase) / 300 : 0;
+    const cursorPreviewMode = cursorPreviewStage === 0 ? 'move'
+      : cursorPreviewStage === 1 ? 'attack'
+      : 'hate';
+    const cursorPreviewActive = cursorPreviewUnit && cursorPreviewAlpha > 0;
+    const moveRangeUnit = cursorPreviewActive && cursorPreviewMode === 'move'
+      ? cursorPreviewUnit
+      : enemyRangePreview?.mode === 'move'
       ? enemyRangePreview.unit
       : rangeMode === 'move' ? selectedUnit : null;
-    const attackRangeUnit = enemyRangePreview?.mode === 'attack'
+    const attackRangeUnit = cursorPreviewActive && cursorPreviewMode === 'attack'
+      ? cursorPreviewUnit
+      : enemyRangePreview?.mode === 'attack'
       ? enemyRangePreview.unit
-      : rangeMode === 'attack' ? selectedUnit : null;
-    const moveDistances = moveRangeUnit ? getMoveDistances(moveRangeUnit) : null;
-    const moveRangeTiles = moveRangeUnit ? getMoveRangeTiles(moveRangeUnit, moveDistances) : null;
+      : rangeMode === 'attack' || rangeMode === 'precision-target' ? selectedUnit : null;
+    const hateRangeUnit = cursorPreviewActive && cursorPreviewMode === 'hate'
+      ? cursorPreviewUnit
+      : rangeMode === 'hate' ? selectedUnit : null;
+    const previewAlpha = cursorPreviewActive ? cursorPreviewAlpha : 1;
+    const previewingEnemyMovement = cursorPreviewActive && cursorPreviewMode === 'move';
+    const moveDistances = moveRangeUnit
+      ? getMoveDistances(moveRangeUnit, previewingEnemyMovement ? moveRangeUnit.moveRange : undefined)
+      : null;
+    const moveRangeTiles = moveRangeUnit
+      ? getMoveRangeTiles(moveRangeUnit, moveDistances, previewingEnemyMovement ? moveRangeUnit.moveRange : undefined)
+      : null;
 
     ctx.clearRect(0, 0, VIEW_PIXEL_WIDTH, VIEW_PIXEL_HEIGHT);
     const firstMapX = Math.floor(camera.x);
@@ -2249,12 +2760,17 @@
         }
         const inMoveRange = moveRangeTiles?.has(`${mapX},${mapY}`);
         const attackDistance = attackRangeUnit ? distanceFromUnitToTile(attackRangeUnit, mapX, mapY) : 0;
-        const inAttackRange = attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance);
-        if (inMoveRange || inAttackRange) {
+        const inAttackRange = attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance) &&
+          hasLineOfSight(attackRangeUnit, { x: mapX, y: mapY });
+        const inHateRange = hateRangeUnit && distanceFromUnitToTile(hateRangeUnit, mapX, mapY) <= 8;
+        if (inMoveRange || inAttackRange || inHateRange) {
+          ctx.globalAlpha = previewAlpha;
           ctx.fillStyle = inAttackRange
             ? 'rgba(237, 112, 91, 0.54)'
+            : inHateRange ? 'rgba(78, 206, 199, 0.42)'
             : moveRangeUnit.side === 'enemy' ? 'rgba(108, 174, 244, 0.52)' : 'rgba(227, 231, 154, 0.48)';
           ctx.fillRect(screenX + 2, screenY + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+          ctx.globalAlpha = 1;
         }
         if (showPassability) {
           const impassable = impassableTiles.has(`${mapX},${mapY}`) || isObstacleAt(mapX, mapY);
@@ -2272,7 +2788,21 @@
       if (obstacle.image.complete && obstacle.image.naturalWidth > 0 &&
           obstacle.x >= camera.x && obstacle.x < camera.x + VIEW_WIDTH &&
           obstacle.y >= camera.y && obstacle.y < camera.y + VIEW_HEIGHT) {
-        ctx.drawImage(obstacle.image, (obstacle.x - camera.x) * TILE_SIZE, (obstacle.y - camera.y) * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        const screenX = (obstacle.x - camera.x) * TILE_SIZE + (obstacle.visualOffsetX ?? 0);
+        const screenY = (obstacle.y - camera.y) * TILE_SIZE;
+        ctx.drawImage(obstacle.image, screenX, screenY, TILE_SIZE, TILE_SIZE);
+        if (obstacle.destructible) {
+          ctx.fillStyle = '#101510e8';
+          ctx.fillRect(screenX + TILE_SIZE - 30, screenY + TILE_SIZE - 19, 28, 16);
+          ctx.strokeStyle = '#d6d2a4';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(screenX + TILE_SIZE - 30, screenY + TILE_SIZE - 19, 28, 16);
+          ctx.fillStyle = '#f0f2dc';
+          ctx.font = '11px Consolas, monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(obstacle.hpDisplayOverride ?? obstacle.hp), screenX + TILE_SIZE - 16, screenY + TILE_SIZE - 11);
+        }
       }
     }
 
@@ -2418,11 +2948,13 @@
     const cursorHeight = cursorFootprint.height * TILE_SIZE;
     const cursorIsAttackTarget = cursorUnit && (
       combatTarget === cursorUnit ||
-      (rangeMode === 'attack' && selectedUnit && cursorUnit.side !== selectedUnit.side &&
+      ((rangeMode === 'attack' || rangeMode === 'precision-target') && selectedUnit && cursorUnit.side !== selectedUnit.side &&
         isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, cursorUnit))) ||
       (enemyRangePreview?.mode === 'attack' && enemyRangePreview.target === cursorUnit)
     );
-    const cursorColor = cursorIsAttackTarget ? '#f04444' : '#f1d978';
+    const cursorIsHateTarget = cursorUnit && rangeMode === 'hate' && cursorUnit.side === 'enemy' &&
+      unitDistance(selectedUnit, cursorUnit) <= 8;
+    const cursorColor = cursorIsAttackTarget ? '#f04444' : cursorIsHateTarget ? '#4ecec7' : '#f1d978';
     ctx.strokeStyle = cursorColor;
     ctx.lineWidth = 4;
     ctx.strokeRect(cursorX + 4, cursorY + 4, cursorWidth - 8, cursorHeight - 8);
@@ -2440,6 +2972,9 @@
     if (!unitCommand.hidden && selectedUnit) {
       positionPanel(unitCommand, selectedUnit);
     }
+    if (!attackChoiceCommand.hidden && selectedUnit) positionPanel(attackChoiceCommand, selectedUnit);
+    if (!precisionConfirmCommand.hidden && selectedUnit) positionPanel(precisionConfirmCommand, selectedUnit);
+    if (!hateConfirmCommand.hidden && selectedUnit) positionPanel(hateConfirmCommand, selectedUnit);
     if (!moveConfirmCommand.hidden && selectedUnit) positionPanel(moveConfirmCommand, selectedUnit);
     if (!unitStatus.hidden && selectedUnit) positionPanel(unitStatus, selectedUnit);
     if (!emptyCommand.hidden) positionPanel(emptyCommand, cursor);
@@ -2456,14 +2991,18 @@
     mapScrollbars.x.setAttribute('aria-valuetext', `左端のマス ${Math.round(camera.x) + 1}`);
     mapScrollbars.y.setAttribute('aria-valuetext', `上端のマス ${Math.round(camera.y) + 1}`);
     touchControls.hidden = isGameOver ||
-      (emptyCommand.hidden && unitCommand.hidden && unitStatus.hidden && turnConfirm.hidden && !rangeMode);
+      (emptyCommand.hidden && unitCommand.hidden && attackChoiceCommand.hidden && precisionConfirmCommand.hidden && hateConfirmCommand.hidden && unitStatus.hidden && turnConfirm.hidden && !rangeMode);
   }
 
   function positionPanel(panel, unit) {
     const bounds = canvas.getBoundingClientRect();
     const frameBounds = canvas.parentElement.getBoundingClientRect();
-    panel.style.left = `${(bounds.left - frameBounds.left) + (unit.x - camera.x + 0.5) * bounds.width / VIEW_WIDTH}px`;
-    panel.style.top = `${(bounds.top - frameBounds.top) + (unit.y - camera.y + 0.5) * bounds.height / VIEW_HEIGHT}px`;
+    const desiredLeft = (bounds.left - frameBounds.left) + (unit.x - camera.x + 0.5) * bounds.width / VIEW_WIDTH;
+    const desiredTop = (bounds.top - frameBounds.top) + (unit.y - camera.y + 0.5) * bounds.height / VIEW_HEIGHT;
+    const maxLeft = Math.max(0, frameBounds.width - panel.offsetWidth);
+    const maxTop = Math.max(0, frameBounds.height - panel.offsetHeight);
+    panel.style.left = `${Math.max(0, Math.min(maxLeft, desiredLeft))}px`;
+    panel.style.top = `${Math.max(0, Math.min(maxTop, desiredTop))}px`;
   }
 
   const directions = {
@@ -2516,6 +3055,33 @@
       return;
     }
 
+    if (!attackChoiceCommand.hidden && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      const change = event.key === 'ArrowDown' ? 1 : -1;
+      const buttons = [...attackChoiceCommand.querySelectorAll('button')];
+      let nextIndex = attackChoiceSelection;
+      do {
+        nextIndex = (nextIndex + change + buttons.length) % buttons.length;
+      } while (buttons[nextIndex].disabled && nextIndex !== attackChoiceSelection);
+      attackChoiceSelection = nextIndex;
+      updateAttackChoiceSelection();
+      return;
+    }
+
+    if (!hateConfirmCommand.hidden && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      hateConfirmSelection = 1 - hateConfirmSelection;
+      updateHateConfirmSelection();
+      return;
+    }
+
+    if (!precisionConfirmCommand.hidden && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      precisionConfirmSelection = 1 - precisionConfirmSelection;
+      updatePrecisionConfirmSelection();
+      return;
+    }
+
     if (!moveConfirmCommand.hidden && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
       event.preventDefault();
       moveConfirmSelection = 1 - moveConfirmSelection;
@@ -2536,12 +3102,13 @@
       return;
     }
 
-    if (!unitCommand.hidden) return;
+    if (!unitCommand.hidden || !attackChoiceCommand.hidden || !precisionConfirmCommand.hidden || !hateConfirmCommand.hidden) return;
     const direction = directions[event.key];
     if (!direction) return;
     event.preventDefault();
     cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, cursor.x + direction[0]));
     cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, cursor.y + direction[1]));
+    updateCursorEnemyPreview(getUnitAtPosition(cursor.x, cursor.y));
     scrollToCursor();
   });
 
