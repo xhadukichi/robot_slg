@@ -22,6 +22,8 @@
   const hateConfirmCommand = document.querySelector('#hate-confirm-command');
   const moveConfirmCommand = document.querySelector('#move-confirm-command');
   const unitStatus = document.querySelector('#unit-status');
+  const debugPanel = document.querySelector('#debug-panel');
+  const debugUnitSelect = document.querySelector('#debug-unit');
   const emptyCommand = document.querySelector('#empty-command');
   const attackMessage = document.querySelector('#attack-message');
   const phaseAnnouncement = document.querySelector('#phase-announcement');
@@ -92,6 +94,132 @@
     { id: 'EN02', side: 'enemy', x: 15, y: 13, hp: 13, maxHp: 13, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, imageFile: 'EN03.png', spriteWidth: 128, spriteHeight: 64, image: new Image() },
   ];
   const initialUnits = units.map((unit) => ({ ...unit }));
+  let debugMode = false;
+  function getDebuggableUnits() {
+    return units;
+  }
+
+  function loadDebugUnit(unit) {
+    if (!unit) return;
+    for (const name of ['hp', 'moveRange', 'evasion', 'hitBonus', 'attackRange', 'attackPower']) {
+      debugPanel.querySelector(`[name="${name}"]`).value = unit[name];
+    }
+  }
+
+  function refreshDebugUnitList(selectedId = debugUnitSelect.value) {
+    const availableUnits = getDebuggableUnits();
+    debugUnitSelect.replaceChildren(...availableUnits.map((unit) => {
+      const option = document.createElement('option');
+      option.value = unit.id;
+      option.textContent = `${unit.id}（${unit.side === 'player' ? 'PC' : 'EN'}）`;
+      return option;
+    }));
+    const selected = availableUnits.find((unit) => unit.id === selectedId) ?? availableUnits[0];
+    if (selected) {
+      debugUnitSelect.value = selected.id;
+      loadDebugUnit(selected);
+    }
+  }
+
+  function toggleDebugMode() {
+    if (gameShell.hidden || isGameOver || battleEventActive) return;
+    debugMode = !debugMode;
+    debugPanel.hidden = !debugMode;
+    if (debugMode) {
+      refreshDebugUnitList(selectedUnit?.id);
+      for (const unit of units.filter((candidate) => candidate.side === 'enemy')) {
+        unit.ended = false;
+        unit.moveUsed = false;
+        unit.moveRemaining = unit.moveRange;
+        unit.attackUsed = false;
+      }
+      unitCommand.hidden = true;
+      unitStatus.hidden = true;
+      attackChoiceCommand.hidden = true;
+      precisionConfirmCommand.hidden = true;
+      hateConfirmCommand.hidden = true;
+      moveConfirmCommand.hidden = true;
+      turnConfirm.hidden = true;
+      emptyCommand.hidden = true;
+      debugUnitSelect.focus();
+    } else {
+      debugPanel.querySelector('[data-debug-action="cancel"]').click();
+      canvas.focus();
+      if (currentSide === 'enemy' && !isEnemyAiRunning) runEnemyTurn();
+    }
+    draw();
+  }
+
+  window.addEventListener('keydown', (event) => {
+    if (event.ctrlKey && event.key.toLowerCase() === 'q') {
+      event.preventDefault();
+      toggleDebugMode();
+    }
+  });
+
+  debugUnitSelect.addEventListener('change', () => {
+    loadDebugUnit(getDebuggableUnits().find((unit) => unit.id === debugUnitSelect.value));
+  });
+  const debugPanelDragHandle = debugPanel.querySelector('.debug-panel-drag-handle');
+  let debugPanelDrag = null;
+  debugPanelDragHandle.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    const frameBounds = debugPanel.parentElement.getBoundingClientRect();
+    const panelBounds = debugPanel.getBoundingClientRect();
+    debugPanel.style.transform = 'none';
+    debugPanel.style.left = `${panelBounds.left - frameBounds.left}px`;
+    debugPanel.style.top = `${panelBounds.top - frameBounds.top}px`;
+    debugPanelDrag = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - panelBounds.left,
+      offsetY: event.clientY - panelBounds.top,
+    };
+    debugPanelDragHandle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  debugPanelDragHandle.addEventListener('pointermove', (event) => {
+    if (!debugPanelDrag || debugPanelDrag.pointerId !== event.pointerId) return;
+    const frameBounds = debugPanel.parentElement.getBoundingClientRect();
+    const maxLeft = Math.max(0, frameBounds.width - debugPanel.offsetWidth);
+    const maxTop = Math.max(0, frameBounds.height - debugPanel.offsetHeight);
+    const left = Math.max(0, Math.min(maxLeft, event.clientX - frameBounds.left - debugPanelDrag.offsetX));
+    const top = Math.max(0, Math.min(maxTop, event.clientY - frameBounds.top - debugPanelDrag.offsetY));
+    debugPanel.style.left = `${left}px`;
+    debugPanel.style.top = `${top}px`;
+  });
+  const finishDebugPanelDrag = (event) => {
+    if (debugPanelDrag?.pointerId === event.pointerId) debugPanelDrag = null;
+  };
+  debugPanelDragHandle.addEventListener('pointerup', finishDebugPanelDrag);
+  debugPanelDragHandle.addEventListener('pointercancel', finishDebugPanelDrag);
+  debugPanel.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const action = event.target.closest('[data-debug-action]')?.dataset.debugAction;
+    if (action === 'cancel') {
+      refreshDebugUnitList();
+      return;
+    }
+    if (action !== 'apply') return;
+    const unit = getDebuggableUnits().find((candidate) => candidate.id === debugUnitSelect.value);
+    if (!unit) return;
+    const values = Object.fromEntries(['hp', 'moveRange', 'evasion', 'hitBonus', 'attackRange', 'attackPower']
+      .map((name) => [name, Number(debugPanel.querySelector(`[name="${name}"]`).value)]));
+    if (Object.values(values).some((value) => !Number.isFinite(value) || !Number.isInteger(value)) ||
+        values.hp < 0 || values.hp > unit.maxHp || values.moveRange < 0 ||
+        values.attackRange < unit.minAttackRange || values.attackPower < 0) return;
+    const spentMove = unit.moveRange - (unit.moveRemaining ?? unit.moveRange);
+    unit.hp = values.hp;
+    unit.moveRange = values.moveRange;
+    unit.moveRemaining = Math.max(0, values.moveRange - spentMove);
+    unit.moveUsed = unit.moveRemaining <= 0;
+    unit.evasion = values.evasion;
+    unit.hitBonus = values.hitBonus;
+    unit.attackRange = values.attackRange;
+    unit.attackPower = values.attackPower;
+    if (selectedUnit === unit) updateMenuSelection();
+    if (!unitStatus.hidden && selectedUnit === unit) showUnitStatus(unit, statusFromCommand);
+    draw();
+  });
   const obstacles = [
     { id: 'OBJ01', x: 9, y: 15, hp: 5, maxHp: 5, destructible: true, imageFile: 'obstacles_01.png', image: new Image() },
     { id: 'OBJ02', x: 7, y: 10, hp: 5, maxHp: 5, destructible: true, imageFile: 'obstacles_01.png', image: new Image() },
@@ -436,13 +564,13 @@
     cursor.x = unit.x;
     cursor.y = unit.y;
     rangeMode = null;
-    if (currentSide === 'enemy' && unit.side === 'enemy') {
+    if (currentSide === 'enemy' && unit.side === 'enemy' && !debugMode) {
       unitCommand.hidden = true;
       unitStatus.hidden = true;
       scrollToCursor();
       return;
     }
-    if (unit.side !== currentSide) {
+    if (unit.side !== currentSide && !(debugMode && unit.side === 'enemy')) {
       unitCommand.hidden = true;
       showUnitStatus(unit, false);
       scrollToCursor();
@@ -464,7 +592,7 @@
       canvas.focus();
       return;
     }
-    if (selectedUnit.side !== currentSide || selectedUnit.ended) return;
+    if ((selectedUnit.side !== currentSide && !(debugMode && selectedUnit.side === 'enemy')) || selectedUnit.ended) return;
     if (action === 'end') {
       unitCommand.hidden = true;
       attackChoiceCommand.hidden = true;
@@ -627,7 +755,7 @@
   function updateMenuSelection() {
     const buttons = unitCommand.querySelectorAll('button');
     if (selectedUnit) {
-      const canAct = selectedUnit.side === currentSide && !selectedUnit.ended;
+      const canAct = (selectedUnit.side === currentSide || (debugMode && selectedUnit.side === 'enemy')) && !selectedUnit.ended;
       const remainingMove = selectedUnit.moveRemaining ?? selectedUnit.moveRange;
       buttons[0].textContent = `移動(${remainingMove})`;
       buttons[1].textContent = selectedUnit.attackUsed ? '攻撃済み' : selectedUnit.ended ? '攻撃せず終了' : '攻撃';
@@ -1582,13 +1710,13 @@
     playPhaseBgm();
     draw();
     canvas.focus();
-    if (currentSide === 'enemy') runEnemyTurn();
+    if (currentSide === 'enemy' && !debugMode) runEnemyTurn();
   }
 
   const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
   async function runEnemyTurn() {
-    if (isGameOver || currentSide !== 'enemy' || isEnemyAiRunning) return;
+    if (debugMode || isGameOver || currentSide !== 'enemy' || isEnemyAiRunning) return;
     isEnemyAiRunning = true;
     unitCommand.hidden = true;
     unitStatus.hidden = true;
@@ -1596,7 +1724,7 @@
     await wait(700);
 
     for (const enemy of units.filter((unit) => unit.side === 'enemy' && !unit.ended)) {
-      if (isGameOver || currentSide !== 'enemy') break;
+      if (debugMode || isGameOver || currentSide !== 'enemy') break;
       selectedUnit = enemy;
       cursor.x = enemy.x;
       cursor.y = enemy.y;
@@ -1687,7 +1815,7 @@
       if (!isGameOver) await wait(350);
     }
 
-    if (!isGameOver && currentSide === 'enemy' && allCurrentUnitsEnded()) {
+    if (!debugMode && !isGameOver && currentSide === 'enemy' && allCurrentUnitsEnded()) {
       phaseAnnouncement.textContent = 'エネミーターン終了！';
       phaseAnnouncement.hidden = false;
       fadeOutBgm();
@@ -1772,7 +1900,7 @@
       if (doubledError < dx) { error += dx; y += sy; }
       tiles.push({ x, y });
     }
-    return reverse ? tiles.reverse() : tiles;
+    return reverse ? [...tiles.reverse(), { x: to.x, y: to.y }] : tiles;
   }
 
   function getLineBlocker(from, to, targetObstacle = null) {
@@ -1998,12 +2126,15 @@
       if (hitMargin >= 1) {
         const previousHp = obstacle.hp;
         obstacle.hp = Math.max(0, obstacle.hp - attacker.attackPower);
-        showAttackMessage(obstacle.hp === 0
-          ? `${attacker.id} → ${obstacle.id}：破壊！`
-          : `${attacker.id} → ${obstacle.id}：命中！ -${attacker.attackPower}`);
+        if (obstacle.hp === 0) attackMessage.hidden = true;
+        else showAttackMessage(`${attacker.id} → ${obstacle.id}：命中！ -${attacker.attackPower}`);
         await shakeUnit(obstacle);
         await animateHpCountdown(obstacle, previousHp, obstacle.hp);
-        if (obstacle.hp <= 0) obstacles.splice(obstacles.indexOf(obstacle), 1);
+        if (obstacle.hp <= 0) {
+          obstacles.splice(obstacles.indexOf(obstacle), 1);
+          await Promise.all([startExplosion(obstacle), playSe('BreakObj.mp3')]);
+          showAttackMessage('障害物が破壊された！', 1800);
+        }
       } else {
         showAttackMessage(`${attacker.id} → ${obstacle.id}：回避！`);
       }
@@ -2226,7 +2357,7 @@
   }
 
   function enterAttackModeIfTargetInRange(unit) {
-    if (unit.side !== currentSide || unit.ended || unit.attackUsed) return false;
+    if ((unit.side !== currentSide && !(debugMode && unit.side === 'enemy')) || unit.ended || unit.attackUsed) return false;
     const targetInRange = units.some((target) =>
       target.side !== unit.side &&
       isWithinAttackRange(unit, unitDistance(unit, target)) &&
@@ -2276,7 +2407,7 @@
     }
     if (!unitStatus.hidden) {
       unitStatus.hidden = true;
-      if (statusFromCommand && selectedUnit?.side === currentSide) {
+      if (statusFromCommand && (selectedUnit?.side === currentSide || (debugMode && selectedUnit?.side === 'enemy'))) {
         unitCommand.hidden = false;
         menuSelectionIndex = 0;
         updateMenuSelection();

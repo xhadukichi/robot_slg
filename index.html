@@ -70,6 +70,18 @@
           <button type="button" data-action="cancel-move">キャンセル</button>
         </div>
         <div id="unit-status" class="unit-status" hidden></div>
+        <section id="debug-panel" class="debug-panel" role="dialog" aria-modal="true" aria-labelledby="debug-title" hidden>
+          <h2 id="debug-title" class="debug-panel-drag-handle">デバッグモード <span>ドラッグして移動</span></h2>
+          <label>ユニット<select id="debug-unit"></select></label>
+          <label>現在HP<input name="hp" type="number" step="1"></label>
+          <label>移動力<input name="moveRange" type="number" step="1"></label>
+          <label>回避値<input name="evasion" type="number" step="1"></label>
+          <label>命中補正<input name="hitBonus" type="number" step="1"></label>
+          <label>射程<input name="attackRange" type="number" step="1"></label>
+          <label>攻撃力<input name="attackPower" type="number" step="1"></label>
+          <div class="debug-actions"><button type="button" data-debug-action="apply">反映</button><button type="button" data-debug-action="cancel">キャンセル</button></div>
+          <p>Ctrl+Q で閉じる</p>
+        </section>
         <div id="empty-command" class="unit-command empty-command" hidden>
           <button type="button" data-action="confirm-turn">ターン終了</button>
         </div>
