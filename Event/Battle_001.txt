@@ -1,8 +1,28 @@
 初期配置
 ｛
+	MAP:M001.png 20*16
+
 	PC01:PC01s.png（6,5）
 	PC02:PC02s.png（9,3）
 	PC03:PC03s.png（3,10）
+
+	ADD_Param
+	｛
+		PC02
+		｛
+			Type_PC_002
+			Type_WEP_006
+			Type_ARM_001
+			Type_ITEM_001
+		｝
+		PC03
+		｛
+			Type_PC_003
+			Type_WEP_005
+			Type_ARM_001
+			Type_ITEM_001
+		｝
+	｝
 
 	EN01:EN02.png（15,11）
 	EN02:EN03.png（16,14）

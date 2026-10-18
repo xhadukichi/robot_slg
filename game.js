@@ -1,15 +1,23 @@
 (() => {
-  const MAP_WIDTH = 20;
-  const MAP_HEIGHT = 16;
+  let MAP_WIDTH = 20;
+  let MAP_HEIGHT = 16;
   const TILE_SIZE = 64;
-  const VIEW_WIDTH = 16;
-  const VIEW_HEIGHT = 12;
-  const VIEW_PIXEL_WIDTH = TILE_SIZE * VIEW_WIDTH;
-  const VIEW_PIXEL_HEIGHT = TILE_SIZE * VIEW_HEIGHT;
+  const STAGE_ID = '000';
+  const EVENT_SCRIPT_PATH = `Event/Event_${STAGE_ID}.txt`;
+  const BATTLE_SCRIPT_PATH = `Event/Battle_${STAGE_ID}.txt`;
+  const STAGE_CLEAR_FLAG = `Battle_${STAGE_ID}`;
+  const MAX_VIEW_WIDTH = 16;
+  const MAX_VIEW_HEIGHT = 12;
+  let VIEW_WIDTH = Math.min(MAX_VIEW_WIDTH, MAP_WIDTH);
+  let VIEW_HEIGHT = Math.min(MAX_VIEW_HEIGHT, MAP_HEIGHT);
+  let VIEW_PIXEL_WIDTH = TILE_SIZE * VIEW_WIDTH;
+  let VIEW_PIXEL_HEIGHT = TILE_SIZE * VIEW_HEIGHT;
   const canvas = document.querySelector('#map');
+  const mapFrame = canvas.parentElement;
   const ctx = canvas.getContext('2d');
   const mapBackground = new Image();
   mapBackground.src = 'Unit/M001.png';
+  const mapSizeLabel = document.querySelector('.map-size');
   const mapScrollbars = {
     x: document.querySelector('#map-scrollbar-x'),
     y: document.querySelector('#map-scrollbar-y'),
@@ -78,8 +86,8 @@
   const startCursor = { x: 9, y: 9 };
   const cursor = { ...startCursor };
   const initialCamera = {
-    x: Math.max(0, Math.min(MAP_WIDTH - VIEW_WIDTH, startCursor.x - Math.floor(VIEW_WIDTH / 2))),
-    y: Math.max(0, Math.min(MAP_HEIGHT - VIEW_HEIGHT, startCursor.y - Math.floor(VIEW_HEIGHT / 2))),
+    x: 0,
+    y: 0,
   };
   const camera = { ...initialCamera };
   const cameraTarget = { ...initialCamera };
@@ -92,8 +100,11 @@
     { id: 'PC03', side: 'player', x: 3, y: 12, hp: 25, maxHp: 25, moveRange: 4, minAttackRange: 2, attackRange: 6, attackPower: 6, evasion: 0, hitBonus: 1, moveUsed: false, attackUsed: false, ended: false, image: new Image() },
     { id: 'EN01', side: 'enemy', x: 14, y: 11, hp: 15, maxHp: 15, moveRange: 5, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, imageFile: 'EN02.png', spriteWidth: 128, spriteHeight: 128, image: new Image() },
     { id: 'EN02', side: 'enemy', x: 15, y: 13, hp: 13, maxHp: 13, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, imageFile: 'EN03.png', spriteWidth: 128, spriteHeight: 64, image: new Image() },
+    { id: 'EN03', side: 'enemy', x: 14, y: 11, hp: 15, maxHp: 15, moveRange: 5, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, spriteWidth: 64, spriteHeight: 64, image: new Image() },
+    { id: 'EN04', side: 'enemy', x: 15, y: 13, hp: 13, maxHp: 13, moveRange: 4, minAttackRange: 1, attackRange: 4, attackPower: 5, evasion: 3, hitBonus: 0, moveUsed: false, attackUsed: false, ended: false, spriteWidth: 64, spriteHeight: 64, image: new Image() },
   ];
-  const initialUnits = units.map((unit) => ({ ...unit }));
+  const unitTemplates = units.map((unit) => ({ ...unit }));
+  const initialUnits = unitTemplates.map((unit) => ({ ...unit }));
   let debugMode = false;
   function getDebuggableUnits() {
     return units;
@@ -273,20 +284,13 @@
   const hitEffectFrameCount = 8;
   const explosionImage = new Image();
   const explosionEffects = [];
-  const hitEffectImages = {
-    shot1: new Image(),
-    shot1Small: new Image(),
-    shot3: new Image(),
-    slash: new Image(),
-  };
+  const hitEffectImages = new Map();
   const hitEffects = [];
+  let unitBaseParameters = new Map();
+  let weaponParameters = new Map();
+  let phaseBgmFiles = { player: 'M002_PC_turn.mp3', enemy: 'M003_EN_turn.mp3' };
   explosionImage.src = 'Unit/Bomb_out.png';
   explosionImage.addEventListener('load', draw);
-  hitEffectImages.shot1.src = 'Unit/1shot.png';
-  hitEffectImages.shot1Small.src = 'Unit/1shot_s.png';
-  hitEffectImages.shot3.src = 'Unit/3shot.png';
-  hitEffectImages.slash.src = 'Unit/slash.png';
-  Object.values(hitEffectImages).forEach((image) => image.addEventListener('load', draw));
   for (const unit of units) {
     const imageFile = unit.imageFile ?? `${unit.id}s.png`;
     unit.image.src = `Unit/${imageFile}`;
@@ -838,7 +842,7 @@
   }
 
   function playPhaseBgm() {
-    setBgm(currentSide === 'player' ? 'M002_PC_turn.mp3' : 'M003_EN_turn.mp3');
+    setBgm(currentSide === 'player' ? phaseBgmFiles.player : phaseBgmFiles.enemy);
   }
 
   function unlockAudio() {
@@ -959,15 +963,15 @@
     introEvent.hidden = false;
 
     try {
-      const opening = parseEventSection(await loadEventScript('Event/Event_001.txt'), '\uff2f\uff30');
-      if (!opening.message) throw new Error('Event_001.txt にOPのＭＥＳがありません。');
+      const opening = parseEventSection(await loadEventScript(EVENT_SCRIPT_PATH), '\uff2f\uff30');
+      if (!opening.message) throw new Error(`${EVENT_SCRIPT_PATH} にOPのＭＥＳがありません。`);
       introEventImage.src = `Unit/${opening.background || introImageSource.split('/').pop()}`;
       await waitForImage(introEventImage);
       if (opening.bgm) setBgm(opening.bgm);
       currentStoryText = opening.message;
     } catch (error) {
       console.error('OPイベントを読み込めませんでした。', error);
-      currentStoryText = `OPイベントを読み込めませんでした。\n${error.message || error}\nEvent/Event_001.txt と素材を確認してください。`;
+      currentStoryText = `OPイベントを読み込めませんでした。\n${error.message || error}\n${EVENT_SCRIPT_PATH} と素材を確認してください。`;
       introEventImage.src = introImageSource;
     }
 
@@ -1060,8 +1064,8 @@
     storyStart.disabled = true;
     skipStoryReveal = false;
     try {
-      const epilogue = parseEventSection(await loadEventScript('Event/Event_001.txt'), '\uff25\uff30');
-      if (!epilogue.message) throw new Error('Event_001.txt にＥＰのＭＥＳがありません。');
+      const epilogue = parseEventSection(await loadEventScript(EVENT_SCRIPT_PATH), '\uff25\uff30');
+      if (!epilogue.message) throw new Error(`${EVENT_SCRIPT_PATH} にＥＰのＭＥＳがありません。`);
       introEventImage.src = 'Unit/' + (epilogue.background || 'Event_01_ED.png');
       await waitForImage(introEventImage);
       if (epilogue.bgm) setBgm(epilogue.bgm);
@@ -1239,8 +1243,8 @@
   async function loadBattleOpening() {
     storyStart.disabled = true;
     try {
-      const battleScript = await loadEventScript('Event/Battle_001.txt');
-      applyBattleSetup(battleScript);
+      const battleScript = await loadEventScript(BATTLE_SCRIPT_PATH);
+      await applyBattleSetup(battleScript);
       const battleEvents = parseBattleTriggerRecords(battleScript);
       battleAttackEvents = battleEvents.attacks;
       battleDefenseEvents = battleEvents.defenses;
@@ -1248,13 +1252,13 @@
       battleEndEvent = battleEvents.end;
       const turnZeroMessages = parseBattleMessageRecords(extractEventBlock(battleScript, 'ターン　０'));
       if (!turnZeroMessages.length) throw new Error('ターン　０にＭＥＳがありません。');
-      enterStage();
+      await enterStage();
       await playBattleMessages(turnZeroMessages);
       announceCurrentTurn();
       playPhaseBgm();
     } catch (error) {
-      console.error('Battle_001を読み込めませんでした。', error);
-      storyText.textContent = `Battle_001を読み込めませんでした。\n${error.message || error}`;
+      console.error(`${BATTLE_SCRIPT_PATH} を読み込めませんでした。`, error);
+      storyText.textContent = `${BATTLE_SCRIPT_PATH} を読み込めませんでした。\n${error.message || error}`;
       storyStart.disabled = false;
       storySkip.hidden = true;
       introEvent.hidden = false;
@@ -1355,11 +1359,16 @@
     return { attacks, defenses, defeats, end };
   }
 
-  function enterStage() {
-    introEvent.hidden = true;
+  async function enterStage() {
     gameShell.hidden = false;
     updatePhaseLabel();
     draw();
+    introEvent.classList.remove('fade-out');
+    await wait(32);
+    introEvent.classList.add('fade-out');
+    await wait(700);
+    introEvent.hidden = true;
+    introEvent.classList.remove('fade-out');
     canvas.focus();
   }
 
@@ -1408,18 +1417,27 @@
     const saveMessage = () => {
       const text = body.join('\n').trim();
       if (!command || !text) return;
-      const number = command[2].match(/\d+/)[0].padStart(2, '0');
       messages.push({
-        speaker: command[1].trim(),
-        unitId: 'PC' + number,
-        followCursor: command[3] === 'Y',
+        speaker: normalizeBattleLine(command.speaker) === 'システムメッセージ' ? '' : command.speaker,
+        unitId: command.unitId,
+        followCursor: command.followCursor,
         text,
       });
     };
 
     for (const line of lines) {
       const normalizedLine = normalizeBattleLine(line);
-      const nextCommand = normalizedLine.match(/^MES\s+(.+?)\s+(PC\d+)\s+([YN])$/i);
+      const targetedCommand = normalizedLine.match(/^MES\s+(.+?)\s+(PC\d+)\s+([YN])$/i);
+      const untargetedCommand = targetedCommand ? null : normalizedLine.match(/^MES\s+(.+)$/i);
+      const nextCommand = targetedCommand
+        ? {
+          speaker: targetedCommand[1].trim(),
+          unitId: `PC${targetedCommand[2].match(/\d+/)[0].padStart(2, '0')}`,
+          followCursor: targetedCommand[3] === 'Y',
+        }
+        : untargetedCommand
+          ? { speaker: untargetedCommand[1].trim(), unitId: null, followCursor: false }
+          : null;
       if (nextCommand) {
         saveMessage();
         command = nextCommand;
@@ -1534,20 +1552,100 @@
       const clearLines = clearBlock ? selectBattleIfBranches(clearBlock.lines) : [];
       const messages = parseBattleMessageRecords(clearLines);
       if (messages.length) await playBattleMessages(messages);
-      eventFlags.add('Battle_001');
+      eventFlags.add(STAGE_CLEAR_FLAG);
       finishGame('ステージクリア');
     }
   }
 
-  function applyBattleSetup(source) {
+  async function applyBattleSetup(source) {
+    const parameterTable = parseParameterTable(await loadEventScript('Data/Param_table.txt'));
+    unitBaseParameters = parameterTable.units;
+    weaponParameters = parameterTable.weapons;
+    const unitLoadouts = new Map([
+      ...parseUnitLoadouts(source, 'ADD_Param'),
+      ...parseUnitLoadouts(source, 'EN_Param'),
+    ]);
+    phaseBgmFiles = parsePhaseBgm(source);
     const setupLines = extractEventBlock(source, '初期配置');
-    const coordinatePattern = /^\s*(PC\d+|EN\d+|OBJ\d+)\s*:\s*(.+?)\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*(?::\s*HP\s*(\d+)|\s+HP\s*(\d+))?\s*$/i;
+    const mapLine = setupLines.map((line) => line.normalize('NFKC').trim()).find((line) => /^MAP\s*:/i.test(line));
+    const mapConfig = mapLine?.match(/^MAP\s*:\s*(\S+)\s+(\d+)\s*\*\s*(\d+)$/i);
+    if (!mapConfig) throw new Error('初期配置に「MAP:画像名 横*縦」を指定してください。');
+    const [, mapFile, widthText, heightText] = mapConfig;
+    const nextMapWidth = Number(widthText);
+    const nextMapHeight = Number(heightText);
+    if (!Number.isInteger(nextMapWidth) || nextMapWidth < 1 || !Number.isInteger(nextMapHeight) || nextMapHeight < 1) {
+      throw new Error(`MAPのサイズ指定が不正です: ${mapLine}`);
+    }
+    MAP_WIDTH = nextMapWidth;
+    MAP_HEIGHT = nextMapHeight;
+    VIEW_WIDTH = Math.min(MAX_VIEW_WIDTH, MAP_WIDTH);
+    VIEW_HEIGHT = Math.min(MAX_VIEW_HEIGHT, MAP_HEIGHT);
+    VIEW_PIXEL_WIDTH = TILE_SIZE * VIEW_WIDTH;
+    VIEW_PIXEL_HEIGHT = TILE_SIZE * VIEW_HEIGHT;
+    canvas.width = VIEW_PIXEL_WIDTH;
+    canvas.height = VIEW_PIXEL_HEIGHT;
+    mapSizeLabel.textContent = `MAP ${MAP_WIDTH} × ${MAP_HEIGHT} · VIEW ${VIEW_WIDTH} × ${VIEW_HEIGHT}`;
+    mapFrame.setAttribute('aria-label', `マップ ${MAP_WIDTH}マス×${MAP_HEIGHT}マス`);
+    startCursor.x = Math.floor(MAP_WIDTH / 2);
+    startCursor.y = Math.floor(MAP_HEIGHT / 2);
+    const mapPath = mapFile.replace(/^Unit[\\/]/i, '');
+    const mapUrl = new URL(`Unit/${mapPath}`, document.baseURI).href;
+    if (mapBackground.src !== mapUrl) {
+      const imageLoaded = new Promise((resolve, reject) => {
+        const onLoad = () => {
+          mapBackground.removeEventListener('error', onError);
+          resolve();
+        };
+        const onError = () => {
+          mapBackground.removeEventListener('load', onLoad);
+          reject(new Error(`マップ画像を読み込めません: ${mapFile}`));
+        };
+        mapBackground.addEventListener('load', onLoad, { once: true });
+        mapBackground.addEventListener('error', onError, { once: true });
+      });
+      mapBackground.src = mapUrl;
+      await imageLoaded;
+    } else if (!mapBackground.naturalWidth) {
+      throw new Error(`マップ画像を読み込めません: ${mapFile}`);
+    }
+    const coordinatePattern = /^\s*(PC\d+|EN\d+|OBJ\d+)\s*:\s*(.+?)(?:\s*:\s*(type_[\w-]+))?\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*(?::\s*HP\s*(\d+)|\s+HP\s*(\d+))?\s*$/i;
+    units.splice(0, units.length, ...unitTemplates.map((unit) => ({ ...unit, image: new Image() })));
     const configuredObstacles = [];
+    const configuredUnitIds = new Set();
+    const configureUnit = (unit, id, position, fallbackImageFile = '') => {
+      const loadout = unitLoadouts.get(id);
+      const unitTypeId = loadout?.unitTypeId ?? getDefaultUnitType(unit);
+      const baseParameters = unitBaseParameters.get(unitTypeId);
+      if (!baseParameters) throw new Error(`Param_table.txt に ${unitTypeId} の定義がありません。`);
+      unit.unitTypeId = unitTypeId;
+      unit.hp = baseParameters.hp ?? unit.hp;
+      unit.maxHp = baseParameters.maxHp ?? baseParameters.hp ?? unit.maxHp;
+      unit.moveRange = baseParameters.moveRange ?? unit.moveRange;
+      unit.evasion = baseParameters.evasion ?? unit.evasion;
+      unit.hitBonus = baseParameters.hitBonus ?? unit.hitBonus;
+      unit.strength = baseParameters.strength ?? unit.strength;
+      unit.spriteWidth = baseParameters.spriteWidth ?? unit.spriteWidth ?? TILE_SIZE;
+      unit.spriteHeight = baseParameters.spriteHeight ?? unit.spriteHeight ?? TILE_SIZE;
+      unit.weaponTypeId = loadout?.weaponTypeId ?? getDefaultWeaponType(unit);
+      const weapon = weaponParameters.get(unit.weaponTypeId);
+      if (!weapon) throw new Error(`Param_table.txt に ${unit.weaponTypeId} の定義がありません。`);
+      unit.attackRange = weapon.attackRange ?? unit.attackRange;
+      unit.attackPower = weapon.attackPower ?? unit.attackPower;
+      unit.weaponAccuracy = weapon.accuracy;
+      unit.x = position.x;
+      unit.y = position.y;
+      unit.imageFile = loadout?.imageFile ?? fallbackImageFile;
+      unit.moveUsed = false;
+      unit.moveRemaining = unit.moveRange;
+      unit.precisionAttackBonus = 0;
+      unit.attackUsed = false;
+      unit.ended = false;
+    };
 
     for (const line of setupLines) {
-      const match = line.match(coordinatePattern);
+      const match = line.normalize('NFKC').match(coordinatePattern);
       if (!match) continue;
-      const [, id, imageFile, x, y, hpWithColon, hpWithSpace] = match;
+      const [, id, imageFile, parameterTypeId, x, y, hpWithColon, hpWithSpace] = match;
       const position = { x: Number(x) - 1, y: Number(y) - 1 };
       if (id.startsWith('OBJ')) {
         const objectHp = hpWithColon ?? hpWithSpace;
@@ -1564,35 +1662,47 @@
 
       const unit = units.find((candidate) => candidate.id === id);
       if (!unit) continue;
-      unit.x = position.x;
-      unit.y = position.y;
-      unit.imageFile = imageFile.trim();
-      unit.moveUsed = false;
-      unit.moveRemaining = unit.moveRange;
-      unit.precisionAttackBonus = 0;
-      unit.attackUsed = false;
-      unit.ended = false;
+      configuredUnitIds.add(id);
+      configureUnit(unit, id.toUpperCase(), position, imageFile.trim());
     }
 
-    if (configuredObstacles.length) {
-      obstacles.splice(0, obstacles.length, ...configuredObstacles);
-      for (const obstacle of obstacles) obstacle.image.src = `Unit/${obstacle.imageFile}`;
-      initialObstacles.splice(0, initialObstacles.length, ...obstacles.map((obstacle) => ({ ...obstacle })));
+    const placementLines = tryExtractEventBlock(source, '\u914d\u7f6e');
+    for (const line of placementLines) {
+      const match = line.normalize('NFKC').match(/^\s*(PC\d+|EN\d+)\s*:\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*$/i);
+      if (!match) continue;
+      const [, rawId, x, y] = match;
+      const id = rawId.toUpperCase();
+      const unit = units.find((candidate) => candidate.id === id);
+      const loadout = unitLoadouts.get(id);
+      if (!unit || !loadout?.imageFile) continue;
+      configuredUnitIds.add(id);
+      configureUnit(unit, id, { x: Number(x) - 1, y: Number(y) - 1 });
     }
+
+    units.splice(0, units.length, ...units.filter((unit) => configuredUnitIds.has(unit.id)));
+    obstacles.splice(0, obstacles.length, ...configuredObstacles);
+    for (const obstacle of obstacles) obstacle.image.src = `Unit/${obstacle.imageFile}`;
+    initialObstacles.splice(0, initialObstacles.length, ...obstacles.map((obstacle) => ({ ...obstacle })));
     for (const unit of units) {
       unit.image.src = `Unit/${unit.imageFile ?? `${unit.id}s.png`}`;
     }
     initialUnits.splice(0, initialUnits.length, ...units.map((unit) => ({ ...unit })));
+    await Promise.all([...units, ...obstacles].map((entity) => waitForImage(entity.image)));
 
     impassableTiles.clear();
     lineOfSightBlockedTiles.clear();
     let readingTerrain = false;
     let terrainBlocksLineOfSight = false;
     for (const line of setupLines) {
-      const trimmed = line.trim();
-      if (trimmed === '岩') { readingTerrain = true; terrainBlocksLineOfSight = true; continue; }
-      if (trimmed === '湖' || trimmed === '木') { readingTerrain = true; terrainBlocksLineOfSight = false; continue; }
-      if (trimmed.startsWith('開始カーソル') || coordinatePattern.test(line)) readingTerrain = false;
+      const trimmed = normalizeBattleLine(line.replace(/\/\/.*$/, ''));
+      if (trimmed === 'Type_A') { readingTerrain = true; terrainBlocksLineOfSight = false; continue; }
+      if (trimmed === 'Type_B') { readingTerrain = true; terrainBlocksLineOfSight = true; continue; }
+      if (trimmed === '岩' || trimmed === '壁') { readingTerrain = true; terrainBlocksLineOfSight = true; }
+      else if (trimmed === '湖' || trimmed === '木' || trimmed === '壊れ壁') {
+        readingTerrain = true;
+        terrainBlocksLineOfSight = false;
+      }
+      if (trimmed.startsWith('開始カーソル')) readingTerrain = false;
       if (!readingTerrain) continue;
       for (const match of line.matchAll(/[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]/g)) {
         const tile = `${Number(match[1]) - 1},${Number(match[2]) - 1}`;
@@ -1609,6 +1719,140 @@
       cursor.x = startCursor.x;
       cursor.y = startCursor.y;
     }
+    startCursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, startCursor.x));
+    startCursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, startCursor.y));
+    cursor.x = startCursor.x;
+    cursor.y = startCursor.y;
+    initialCamera.x = Math.max(0, Math.min(MAP_WIDTH - VIEW_WIDTH, startCursor.x - Math.floor(VIEW_WIDTH / 2)));
+    initialCamera.y = Math.max(0, Math.min(MAP_HEIGHT - VIEW_HEIGHT, startCursor.y - Math.floor(VIEW_HEIGHT / 2)));
+    camera.x = initialCamera.x;
+    camera.y = initialCamera.y;
+    cameraTarget.x = camera.x;
+    cameraTarget.y = camera.y;
+    draw();
+  }
+
+  function parseParameterTable(source) {
+    const units = new Map();
+    const weapons = new Map();
+    const unitFields = new Map([
+      ['HP', 'hp'], ['\u79fb\u52d5\u529b', 'moveRange'], ['\u56de\u907f', 'evasion'],
+      ['\u547d\u4e2d\u88dc\u6b63', 'hitBonus'], ['\u529b', 'strength'], ['\u30b5\u30a4\u30ba', 'size'],
+    ]);
+    const weaponFields = new Map([
+      ['\u5c04\u7a0b', 'attackRange'], ['\u30c0\u30e1\u30fc\u30b8', 'attackPower'], ['\u547d\u4e2d\u7387', 'accuracy'],
+      ['SE', 'se'], ['HIT', 'hitEffect'],
+    ]);
+    let section = '';
+    let currentType = null;
+    let currentFields = null;
+    for (const rawLine of source.replace(/\r/g, '').split('\n')) {
+      const line = rawLine.replace(/\/\/.*$/, '').normalize('NFKC').trim();
+      if (!line) continue;
+
+      if (['PC', 'EN', '\u30a6\u30a7\u30dd\u30f3', '\u30a2\u30fc\u30de\u30fc', '\u7279\u6b8a\u88c5\u5099'].includes(line)) {
+        section = line;
+        currentType = null;
+        currentFields = null;
+        continue;
+      }
+
+      const typeMatch = line.match(/^(Type_(PC|EN|WEP|ARM|ITEM)_\d+)$/i);
+      if (typeMatch) {
+        const [, typeId, kind] = typeMatch;
+        const isUnitType = (section === 'PC' && kind.toUpperCase() === 'PC') ||
+          (section === 'EN' && kind.toUpperCase() === 'EN');
+        const isWeaponType = section === '\u30a6\u30a7\u30dd\u30f3' && kind.toUpperCase() === 'WEP';
+        if (!isUnitType && !isWeaponType) {
+          currentType = null;
+          currentFields = null;
+          continue;
+        }
+        const table = isUnitType ? units : weapons;
+        if (table.has(typeId)) throw new Error(`Param_table.txt のタイプIDが重複しています: ${typeId}`);
+        currentType = {};
+        table.set(typeId, currentType);
+        currentFields = isUnitType ? unitFields : weaponFields;
+        continue;
+      }
+
+      if (/^Type_/i.test(line)) {
+        currentType = null;
+        currentFields = null;
+        continue;
+      }
+      if (!currentType) continue;
+      const fieldMatch = line.match(/^([^:\s]+)\s*(?::\s*|\s+)(.+)$/);
+      if (!fieldMatch) continue;
+      const fieldName = fieldMatch[1].toUpperCase() === 'SE' || fieldMatch[1].toUpperCase() === 'HIT'
+        ? fieldMatch[1].toUpperCase()
+        : fieldMatch[1];
+      const value = fieldMatch[2].trim();
+      const outputField = currentFields?.get(fieldName);
+      if (!outputField) continue;
+      if (outputField === 'se' || outputField === 'hitEffect') currentType[outputField] = value;
+      else {
+        const numericValue = Number(value.replace(/^\+/, ''));
+        if (Number.isFinite(numericValue)) currentType[outputField] = numericValue;
+      }
+    }
+
+    const sizeDimensions = new Map([[1, [TILE_SIZE, TILE_SIZE]], [2, [TILE_SIZE * 2, TILE_SIZE]], [4, [TILE_SIZE * 2, TILE_SIZE * 2]]]);
+    for (const parameters of units.values()) {
+      if (parameters.hp !== undefined) parameters.maxHp = parameters.hp;
+      const dimensions = sizeDimensions.get(parameters.size);
+      if (dimensions) [parameters.spriteWidth, parameters.spriteHeight] = dimensions;
+    }
+    return { units, weapons };
+  }
+
+  function tryExtractEventBlock(source, blockName) {
+    const found = source.replace(/\r/g, '').split('\n')
+      .some((line) => line.trim() === blockName);
+    return found ? extractEventBlock(source, blockName) : [];
+  }
+
+  function parseUnitLoadouts(source, blockName) {
+    const loadouts = new Map();
+    let current = null;
+    for (const rawLine of tryExtractEventBlock(source, blockName)) {
+      const line = rawLine.replace(/\/\/.*$/, '').normalize('NFKC').trim();
+      const unitMatch = line.match(/^(PC\d+|EN\d+)$/i);
+      if (unitMatch) {
+        current = {};
+        loadouts.set(normalizeUnitId(unitMatch[1]), current);
+        continue;
+      }
+      if (!current) continue;
+      if (/^[\w.-]+\.png$/i.test(line) && !current.imageFile) current.imageFile = line;
+      const unitTypeMatch = line.match(/^(Type_(?:PC|EN)_\d+)$/i);
+      if (unitTypeMatch) current.unitTypeId = unitTypeMatch[1];
+      const weaponMatch = line.match(/^(Type_WEP_\d+)$/i);
+      if (weaponMatch) current.weaponTypeId = weaponMatch[1];
+    }
+    return loadouts;
+  }
+
+  function normalizeUnitId(id) {
+    const match = id.match(/^(PC|EN)0*(\d+)$/i);
+    return match ? `${match[1].toUpperCase()}${match[2].padStart(2, '0')}` : id.toUpperCase();
+  }
+
+  function getDefaultUnitType(unit) {
+    const match = unit.id.match(/^(PC|EN)0*(\d+)$/i);
+    if (!match) return '';
+    const [, faction, number] = match;
+    return `Type_${faction.toUpperCase()}_${number.padStart(3, '0')}`;
+  }
+
+  function parsePhaseBgm(source) {
+    const result = { player: 'M002_PC_turn.mp3', enemy: 'M003_EN_turn.mp3' };
+    for (const rawLine of tryExtractEventBlock(source, '\uff22\uff27\uff2d')) {
+      const match = rawLine.normalize('NFKC').trim().match(/^(PC|EN)\s*:\s*(\S+)$/i);
+      if (!match) continue;
+      result[match[1].toUpperCase() === 'PC' ? 'player' : 'enemy'] = match[2];
+    }
+    return result;
   }
 
   function extractEventBlock(source, blockName) {
@@ -1890,21 +2134,37 @@
     const endY = reverse ? from.y : to.y;
     const dx = Math.abs(endX - x);
     const dy = Math.abs(endY - y);
-    const sx = x < endX ? 1 : -1;
-    const sy = y < endY ? 1 : -1;
-    let error = dx - dy;
-    const tiles = [];
-    while (x !== endX || y !== endY) {
-      const doubledError = error * 2;
-      if (doubledError > -dy) { error -= dy; x += sx; }
-      if (doubledError < dx) { error += dx; y += sy; }
+    const sx = Math.sign(endX - x);
+    const sy = Math.sign(endY - y);
+    let crossedX = 0;
+    let crossedY = 0;
+    const tiles = [{ x, y }];
+    while (crossedX < dx || crossedY < dy) {
+      const nextCrossing = (1 + 2 * crossedX) * dy - (1 + 2 * crossedY) * dx;
+      if (nextCrossing === 0) {
+        // The ray crosses a grid corner; include both adjacent cells so it cannot slip past a wall corner.
+        tiles.push({ x: x + sx, y }, { x, y: y + sy });
+        x += sx;
+        y += sy;
+        crossedX++;
+        crossedY++;
+      } else if (nextCrossing < 0) {
+        x += sx;
+        crossedX++;
+      } else {
+        y += sy;
+        crossedY++;
+      }
       tiles.push({ x, y });
     }
-    return reverse ? [...tiles.reverse(), { x: to.x, y: to.y }] : tiles;
+    return reverse ? tiles.reverse() : tiles;
   }
 
   function getLineBlocker(from, to, targetObstacle = null) {
-    for (const { x, y } of getLineTiles(from, to).slice(0, -1)) {
+    for (const { x, y } of getLineTiles(from, to)) {
+      // Neither unit's occupied endpoint tile is between the shooter and target.
+      if ((x === from.x && y === from.y) || (x === to.x && y === to.y)) continue;
+      // OBJ is drawn over the base terrain, so its rule takes precedence until it is destroyed.
       const obstacle = obstacles.find((candidate) =>
         candidate.x === x && candidate.y === y && candidate !== targetObstacle
       );
@@ -2158,15 +2418,17 @@
     delete unit.hpDisplayOverride;
   }
 
+  function getDefaultWeaponType(unit) {
+    if (unit.side === 'enemy') return 'Type_WEP_101';
+    return ({
+      PC01: 'Type_WEP_001',
+      PC02: 'Type_WEP_006',
+      PC03: 'Type_WEP_005',
+    })[unit.id] ?? '';
+  }
+
   function getAttackSe(unit) {
-    const seNames = {
-      PC01: 'shot_pc1.mp3',
-      PC02: 'shot_pc2.mp3',
-      PC03: 'shot_pc3.mp3',
-      EN01: 'shot_en1.mp3',
-      EN02: 'shot_en1.mp3',
-    };
-    return seNames[unit.id];
+    return weaponParameters.get(unit.weaponTypeId)?.se ?? '';
   }
 
   function showAttackMessage(message, duration = 1200) {
@@ -2236,14 +2498,21 @@
   }
 
   function getHitEffectImage(attacker) {
-    if (attacker.side === 'enemy') return hitEffectImages.slash;
-    if (attacker.id === 'PC02') return hitEffectImages.shot3;
-    if (attacker.id === 'PC01') return hitEffectImages.shot1Small;
-    return hitEffectImages.shot1;
+    const filename = weaponParameters.get(attacker.weaponTypeId)?.hitEffect;
+    if (!filename) return null;
+    let image = hitEffectImages.get(filename);
+    if (!image) {
+      image = new Image();
+      image.src = `Unit/${filename}`;
+      image.addEventListener('load', draw, { once: true });
+      hitEffectImages.set(filename, image);
+    }
+    return image;
   }
 
   async function startHitEffect(attacker, target) {
     const image = getHitEffectImage(attacker);
+    if (!image) return;
     if (!image.complete) {
       await new Promise((resolve) => {
         image.addEventListener('load', resolve, { once: true });
@@ -2606,6 +2875,7 @@
     if (x < 0 || y < 0 || x + width > MAP_WIDTH || y + height > MAP_HEIGHT) return true;
     for (let tileY = y; tileY < y + height; tileY++) {
       for (let tileX = x; tileX < x + width; tileX++) {
+        // An intact OBJ also blocks entry; after removal, only the terrain rule remains.
         if (impassableTiles.has(`${tileX},${tileY}`)) return true;
       }
     }
@@ -2712,7 +2982,7 @@
   function setupMapScrollbar(scrollbar, axis) {
     const thumb = scrollbar.querySelector('span');
     const isHorizontal = axis === 'x';
-    const maximum = isHorizontal ? MAP_WIDTH - VIEW_WIDTH : MAP_HEIGHT - VIEW_HEIGHT;
+    const getMaximum = () => Math.max(0, isHorizontal ? MAP_WIDTH - VIEW_WIDTH : MAP_HEIGHT - VIEW_HEIGHT);
     let drag = null;
 
     scrollbar.addEventListener('pointerdown', (event) => {
@@ -2761,7 +3031,7 @@
       else if (event.key === 'PageUp') next -= isHorizontal ? VIEW_WIDTH : VIEW_HEIGHT;
       else if (event.key === 'PageDown') next += isHorizontal ? VIEW_WIDTH : VIEW_HEIGHT;
       else if (event.key === 'Home') next = 0;
-      else if (event.key === 'End') next = maximum;
+      else if (event.key === 'End') next = getMaximum();
       else return;
       event.preventDefault();
       setCameraPosition(isHorizontal ? next : camera.x, isHorizontal ? camera.y : next);
@@ -2772,7 +3042,7 @@
       const travel = trackLength - thumbLength;
       if (travel <= 0) return;
       const position = Math.max(0, Math.min(travel, pointer - trackStart - offset));
-      const cameraPosition = (position / travel) * maximum;
+      const cameraPosition = (position / travel) * getMaximum();
       setCameraPosition(isHorizontal ? cameraPosition : camera.x, isHorizontal ? camera.y : cameraPosition);
     }
   }
@@ -3111,12 +3381,18 @@
     if (!emptyCommand.hidden) positionPanel(emptyCommand, cursor);
     const horizontalThumb = mapScrollbars.x.querySelector('span');
     const verticalThumb = mapScrollbars.y.querySelector('span');
-    const horizontalSize = VIEW_WIDTH / MAP_WIDTH;
-    const verticalSize = VIEW_HEIGHT / MAP_HEIGHT;
+    const horizontalMaximum = Math.max(0, MAP_WIDTH - VIEW_WIDTH);
+    const verticalMaximum = Math.max(0, MAP_HEIGHT - VIEW_HEIGHT);
+    const horizontalSize = Math.min(1, VIEW_WIDTH / MAP_WIDTH);
+    const verticalSize = Math.min(1, VIEW_HEIGHT / MAP_HEIGHT);
     horizontalThumb.style.width = `${horizontalSize * 100}%`;
-    horizontalThumb.style.left = `${(camera.x / (MAP_WIDTH - VIEW_WIDTH)) * (1 - horizontalSize) * 100}%`;
+    horizontalThumb.style.left = `${horizontalMaximum ? (camera.x / horizontalMaximum) * (1 - horizontalSize) * 100 : 0}%`;
     verticalThumb.style.height = `${verticalSize * 100}%`;
-    verticalThumb.style.top = `${(camera.y / (MAP_HEIGHT - VIEW_HEIGHT)) * (1 - verticalSize) * 100}%`;
+    verticalThumb.style.top = `${verticalMaximum ? (camera.y / verticalMaximum) * (1 - verticalSize) * 100 : 0}%`;
+    mapScrollbars.x.hidden = horizontalMaximum === 0;
+    mapScrollbars.y.hidden = verticalMaximum === 0;
+    mapScrollbars.x.setAttribute('aria-valuemax', String(horizontalMaximum + 1));
+    mapScrollbars.y.setAttribute('aria-valuemax', String(verticalMaximum + 1));
     mapScrollbars.x.setAttribute('aria-valuenow', String(Math.round(camera.x) + 1));
     mapScrollbars.y.setAttribute('aria-valuenow', String(Math.round(camera.y) + 1));
     mapScrollbars.x.setAttribute('aria-valuetext', `左端のマス ${Math.round(camera.x) + 1}`);
