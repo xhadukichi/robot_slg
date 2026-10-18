@@ -309,6 +309,7 @@
   const hitEffects = [];
   let unitBaseParameters = new Map();
   let weaponParameters = new Map();
+  let armorParameters = new Map();
   let itemParameters = new Map();
   let phaseBgmFiles = { player: 'M002_PC_turn.mp3', enemy: 'M003_EN_turn.mp3' };
   explosionImage.src = 'Unit/Bomb_out.png';
@@ -417,9 +418,7 @@
     if (rangeMode === 'precision-target') {
       cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
       cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
-      if (clickedUnit?.side === 'enemy' &&
-          isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, clickedUnit)) &&
-          hasLineOfSight(selectedUnit, clickedUnit)) {
+      if (clickedUnit?.side === 'enemy' && canAttackUnitTarget(selectedUnit, clickedUnit)) {
         showPrecisionConfirmation(clickedUnit);
       }
       scrollToCursor();
@@ -447,15 +446,13 @@
         scrollToCursor();
         return;
       }
-      const distance = selectedUnit
-        ? clickedUnit && clickedUnit !== selectedUnit
-          ? unitDistance(selectedUnit, clickedUnit)
-          : distanceFromUnitToTile(selectedUnit, mapX, mapY)
-        : Infinity;
-      if (!selectedUnit || !isWithinAttackRange(selectedUnit, distance)) {
+      const targetInRange = clickedUnit && clickedUnit !== selectedUnit
+        ? canAttackUnitTarget(selectedUnit, clickedUnit)
+        : selectedUnit && isWithinAttackRange(selectedUnit, distanceFromUnitToTile(selectedUnit, mapX, mapY));
+      if (!selectedUnit || !targetInRange) {
         if (pendingMove?.unit === selectedUnit) rollbackPendingMove();
         else rangeMode = null;
-      } else if (clickedUnit && hasLineOfSight(selectedUnit, clickedUnit)) {
+      } else if (clickedUnit && clickedUnit !== selectedUnit) {
         tryAttackTarget(clickedUnit);
       }
       scrollToCursor();
@@ -763,8 +760,7 @@
   function showPrecisionConfirmation(target) {
     if (!selectedUnit || !target || selectedUnit.attackUsed || selectedUnit.moveUsed ||
         (selectedUnit.moveRemaining ?? selectedUnit.moveRange) < selectedUnit.moveRange || target.side !== 'enemy' ||
-        !isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, target)) ||
-        !hasLineOfSight(selectedUnit, target)) return;
+        !canAttackUnitTarget(selectedUnit, target)) return;
     pendingPrecisionTarget = target;
     precisionConfirmSelection = 0;
     updatePrecisionConfirmSelection();
@@ -823,7 +819,7 @@
   function confirmPrecisionAttack() {
     const target = pendingPrecisionTarget;
     if (!selectedUnit || !target || !units.includes(target) || selectedUnit.attackUsed || selectedUnit.moveUsed ||
-        !isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, target)) ||
+        !canAttackUnitTarget(selectedUnit, target) ||
         (selectedUnit.moveRemaining ?? selectedUnit.moveRange) < selectedUnit.moveRange) return;
     selectedUnit.moveRemaining = 0;
     selectedUnit.moveUsed = true;
@@ -869,7 +865,8 @@
       buttons[4].textContent = selectedUnit.ended ? '行動終了済み' : '行動終了';
       buttons[0].disabled = !canAct || remainingMove <= 0;
       buttons[1].disabled = !canAct || selectedUnit.attackUsed;
-      buttons[2].disabled = !canAct || !item || itemUsesRemaining <= 0 || !Number.isFinite(item.hpRestore) || item.hpRestore <= 0;
+      buttons[2].disabled = !canAct || hasMovedOrAttacked(selectedUnit) || !item || itemUsesRemaining <= 0 ||
+        !Number.isFinite(item.hpRestore) || item.hpRestore <= 0;
       buttons[3].disabled = false;
       buttons[4].disabled = !canAct;
     }
@@ -881,9 +878,14 @@
     });
   }
 
+  function hasMovedOrAttacked(unit) {
+    return !unit || unit.attackUsed || unit.moveUsed ||
+      (unit.moveRemaining ?? unit.moveRange) < unit.moveRange;
+  }
+
   function showSpecialEquipmentChoice() {
     const item = itemParameters.get(selectedUnit?.itemTypeId);
-    if (!selectedUnit || !item || selectedUnit.itemUsesRemaining <= 0 ||
+    if (!selectedUnit || selectedUnit.ended || hasMovedOrAttacked(selectedUnit) || !item || selectedUnit.itemUsesRemaining <= 0 ||
         !Number.isFinite(item.hpRestore) || item.hpRestore <= 0) return;
     emptyCommand.hidden = true;
     unitCommand.hidden = true;
@@ -904,7 +906,7 @@
 
   function showSpecialEquipmentConfirmation() {
     const item = itemParameters.get(selectedUnit?.itemTypeId);
-    if (!selectedUnit || !item || selectedUnit.itemUsesRemaining <= 0) return;
+    if (!selectedUnit || selectedUnit.ended || hasMovedOrAttacked(selectedUnit) || !item || selectedUnit.itemUsesRemaining <= 0) return;
     itemConfirmMessage.textContent = `${item.name ?? selectedUnit.itemTypeId}（HP+${item.hpRestore}）を使用しますか？`;
     itemChoiceCommand.hidden = true;
     itemConfirmSelection = 0;
@@ -925,7 +927,8 @@
     if (!unit) return;
     const item = itemParameters.get(unit.itemTypeId);
     const hpRestore = item?.hpRestore;
-    if (!item || unit.itemUsesRemaining <= 0 || !Number.isFinite(hpRestore) || hpRestore <= 0) return;
+    if (unit.ended || hasMovedOrAttacked(unit) || !item || unit.itemUsesRemaining <= 0 ||
+        !Number.isFinite(hpRestore) || hpRestore <= 0) return;
 
     const restoredHp = Math.min(hpRestore, Math.max(0, unit.maxHp - unit.hp));
     unit.hp += restoredHp;
@@ -951,13 +954,25 @@
   function showUnitStatus(unit, fromCommand) {
     statusFromCommand = fromCommand;
     unitCommand.hidden = true;
+    const weapon = weaponParameters.get(unit.weaponTypeId);
+    const armor = armorParameters.get(unit.armorTypeId);
+    const item = itemParameters.get(unit.itemTypeId);
+    const formatNumber = (value) => toFullWidthNumber(value ?? 0);
+    const minRange = weapon?.minAttackRange ?? unit.minAttackRange ?? 1;
+    const maxRange = weapon?.attackRange ?? unit.attackRange;
+    const rangeText = minRange === maxRange
+      ? formatNumber(maxRange)
+      : `${formatNumber(minRange)}～${formatNumber(maxRange)}`;
     unitStatus.innerHTML = `<div class="status-title">${unit.id} <span class="status-side">${unit.side === 'player' ? 'PC' : 'EN'}</span></div>
-      <div>HP：${unit.hp} / ${unit.maxHp}</div>
-      <div>移動力：${unit.moveRange}</div>
-      <div>射程：${unit.minAttackRange === unit.attackRange ? unit.attackRange : `${unit.minAttackRange}～${unit.attackRange}`}</div>
-      <div>攻撃力：${unit.attackPower}</div>
-      <div>回避：${unit.evasion}</div>
-      <div>命中補正：${unit.hitBonus}</div>`;
+      <div>●HP：${formatNumber(unit.hp)}/${formatNumber(unit.maxHp)}</div>
+      <div>●移動力：${formatNumber(unit.moveRange)}</div>
+      <div>●回避：${formatNumber(unit.evasion)}</div>
+      <div>●命中補正：${formatNumber(unit.hitBonus)}</div>
+      <div>●武器：${weapon?.name ?? unit.weaponTypeId ?? 'なし'}</div>
+      <div class="status-detail">射程：${rangeText}</div>
+      <div class="status-detail">攻撃力：${formatNumber(weapon?.attackPower ?? unit.attackPower)}</div>
+      <div>●装備：${armor?.name ?? unit.armorTypeId ?? 'なし'}</div>
+      <div>●特殊：${item ? `${item.name ?? unit.itemTypeId}（${formatNumber(unit.itemUsesRemaining)}）` : 'なし'}</div>`;
     unitStatus.hidden = false;
   }
 
@@ -1470,6 +1485,26 @@
 
   async function loadBattleOpening(stageId = currentStageId) {
     currentStageId = String(stageId).padStart(3, '0');
+    window.clearTimeout(phaseAnnouncementTimer);
+    phaseAnnouncement.hidden = true;
+    phaseInputLocked = false;
+    clearTransitioning = false;
+    clearPromptReady = false;
+    isGameOver = false;
+    isEnemyAiRunning = false;
+    isCombatResolving = false;
+    isUnitMoving = false;
+    pendingMove = null;
+    pendingPrecisionTarget = null;
+    selectedUnit = null;
+    combatTarget = null;
+    rangeMode = null;
+    turnConfirm.hidden = true;
+    completedBattleEvents.clear();
+    eventFlags.clear();
+    currentSide = 'player';
+    sideTurnCounts.player = 1;
+    sideTurnCounts.enemy = 1;
     currentEventGoto = '';
     const battlePath = `Event/Battle_${currentStageId}.txt`;
     storyStart.disabled = true;
@@ -1931,10 +1966,24 @@
     const parameterTable = parseParameterTable(await loadEventScript('Data/Param_table.txt'));
     unitBaseParameters = parameterTable.units;
     weaponParameters = parameterTable.weapons;
+    armorParameters = parameterTable.armors;
     itemParameters = parameterTable.items;
+    const carriedPlayerLoadouts = new Map(playerRoster.map((unit) => [normalizeUnitId(unit.id), {
+      imageFile: unit.imageFile,
+      unitTypeId: unit.unitTypeId,
+      weaponTypeId: unit.weaponTypeId,
+      armorTypeId: unit.armorTypeId,
+      itemTypeId: unit.itemTypeId,
+    }]));
+    const stagePlayerLoadouts = parseUnitLoadouts(source, 'ADD_Param');
+    for (const [id, loadout] of stagePlayerLoadouts) carriedPlayerLoadouts.set(id, {
+      ...carriedPlayerLoadouts.get(id),
+      ...loadout,
+    });
+    const stageEnemyLoadouts = parseUnitLoadouts(source, 'EN_Param');
     const unitLoadouts = new Map([
-      ...parseUnitLoadouts(source, 'ADD_Param'),
-      ...parseUnitLoadouts(source, 'EN_Param'),
+      ...carriedPlayerLoadouts,
+      ...stageEnemyLoadouts,
     ]);
     phaseBgmFiles = parsePhaseBgm(source);
     const setupLines = extractEventBlock(source, '初期配置');
@@ -1981,6 +2030,12 @@
     }
     const coordinatePattern = /^\s*(PC\d+|EN\d+|OBJ\d+)\s*:\s*(.+?)(?:\s*:\s*(type_[\w-]+))?\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*(?::\s*HP\s*(\d+)|\s+HP\s*(\d+))?\s*$/i;
     units.splice(0, units.length, ...unitTemplates.map((unit) => ({ ...unit, image: new Image() })));
+    const enemyTemplate = unitTemplates.find((unit) => unit.side === 'enemy');
+    if (stageEnemyLoadouts.size && !enemyTemplate) throw new Error('敵ユニットの初期テンプレートがありません。');
+    for (const id of stageEnemyLoadouts.keys()) {
+      if (units.some((unit) => unit.id === id)) continue;
+      units.push({ ...enemyTemplate, id, image: new Image() });
+    }
     const configuredObstacles = [];
     const configuredUnitIds = new Set();
     const configureUnit = (unit, id, position, fallbackImageFile = '') => {
@@ -2007,6 +2062,7 @@
       const weapon = weaponParameters.get(unit.weaponTypeId);
       if (!weapon) throw new Error(`Param_table.txt に ${unit.weaponTypeId} の定義がありません。`);
       unit.attackRange = weapon.attackRange ?? unit.attackRange;
+      unit.minAttackRange = weapon.minAttackRange ?? 1;
       unit.attackPower = weapon.attackPower ?? unit.attackPower;
       unit.weaponAccuracy = weapon.accuracy;
       unit.x = position.x;
@@ -2064,7 +2120,8 @@
       unit.image.src = `Unit/${unit.imageFile ?? `${unit.id}s.png`}`;
     }
     initialUnits.splice(0, initialUnits.length, ...units.map((unit) => ({ ...unit })));
-    playerRoster = units.filter((unit) => unit.side === 'player').map((unit) => {
+    const updatedPlayerRoster = new Map(playerRoster.map((unit) => [normalizeUnitId(unit.id), unit]));
+    for (const unit of units.filter((candidate) => candidate.side === 'player')) {
       const record = serializeEntity(unit);
       delete record.x;
       delete record.y;
@@ -2073,8 +2130,9 @@
       delete record.attackUsed;
       delete record.ended;
       delete record.hateTargetId;
-      return record;
-    });
+      updatedPlayerRoster.set(normalizeUnitId(unit.id), record);
+    }
+    playerRoster = [...updatedPlayerRoster.values()];
     await Promise.all([...units, ...obstacles].map((entity) => waitForImage(entity.image)));
 
     impassableTiles.clear();
@@ -2123,6 +2181,7 @@
   function parseParameterTable(source) {
     const units = new Map();
     const weapons = new Map();
+    const armors = new Map();
     const items = new Map();
     const unitFields = new Map([
       ['HP', 'hp'], ['\u79fb\u52d5\u529b', 'moveRange'], ['\u56de\u907f', 'evasion'],
@@ -2132,6 +2191,7 @@
       ['\u5c04\u7a0b', 'attackRange'], ['\u30c0\u30e1\u30fc\u30b8', 'attackPower'], ['\u547d\u4e2d\u7387', 'accuracy'],
       ['SE', 'se'], ['HIT', 'hitEffect'],
     ]);
+    const armorFields = new Map();
     const itemFields = new Map([['効果', 'effect'], ['使用回数', 'uses']]);
     let section = '';
     let currentType = null;
@@ -2153,17 +2213,18 @@
         const isUnitType = (section === 'PC' && kind.toUpperCase() === 'PC') ||
           (section === 'EN' && kind.toUpperCase() === 'EN');
         const isWeaponType = section === '\u30a6\u30a7\u30dd\u30f3' && kind.toUpperCase() === 'WEP';
+        const isArmorType = section === '\u30a2\u30fc\u30de\u30fc' && kind.toUpperCase() === 'ARM';
         const isItemType = section === '特殊装備' && kind.toUpperCase() === 'ITEM';
-        if (!isUnitType && !isWeaponType && !isItemType) {
+        if (!isUnitType && !isWeaponType && !isArmorType && !isItemType) {
           currentType = null;
           currentFields = null;
           continue;
         }
-        const table = isUnitType ? units : isWeaponType ? weapons : items;
+        const table = isUnitType ? units : isWeaponType ? weapons : isArmorType ? armors : items;
         if (table.has(typeId)) throw new Error(`Param_table.txt のタイプIDが重複しています: ${typeId}`);
         currentType = {};
         table.set(typeId, currentType);
-        currentFields = isUnitType ? unitFields : isWeaponType ? weaponFields : itemFields;
+        currentFields = isUnitType ? unitFields : isWeaponType ? weaponFields : isArmorType ? armorFields : itemFields;
         continue;
       }
 
@@ -2173,12 +2234,10 @@
         continue;
       }
       if (!currentType) continue;
-      if (currentFields === itemFields) {
-        const itemName = line.match(/^「(.+)」$/);
-        if (itemName) {
-          currentType.name = itemName[1];
-          continue;
-        }
+      const nameMatch = line.match(/^●\s*(.+)$/);
+      if (nameMatch) {
+        currentType.name = nameMatch[1];
+        continue;
       }
       const fieldMatch = line.match(/^([^:\s]+)\s*(?::\s*|\s+)(.+)$/);
       if (!fieldMatch) continue;
@@ -2189,6 +2248,13 @@
       const outputField = currentFields?.get(fieldName);
       if (!outputField) continue;
       if (outputField === 'se' || outputField === 'hitEffect' || outputField === 'effect') currentType[outputField] = value;
+      else if (outputField === 'attackRange') {
+        const rangeMatch = value.match(/^(\d+)(?:\s*[~〜-]\s*(\d+))?$/);
+        if (rangeMatch) {
+          currentType.minAttackRange = rangeMatch[2] ? Number(rangeMatch[1]) : 1;
+          currentType.attackRange = Number(rangeMatch[2] ?? rangeMatch[1]);
+        }
+      }
       else {
         const numericValue = Number(value.replace(/^\+/, ''));
         if (Number.isFinite(numericValue)) currentType[outputField] = numericValue;
@@ -2205,7 +2271,7 @@
       const hpEffect = parameters.effect?.match(/^HP\s*\+\s*(\d+)$/i);
       if (hpEffect) parameters.hpRestore = Number(hpEffect[1]);
     }
-    return { units, weapons, items };
+    return { units, weapons, armors, items };
   }
 
   function tryExtractEventBlock(source, blockName) {
@@ -2352,12 +2418,15 @@
     draw();
   }
 
-  function openTitleLoadList() {
+  async function openTitleLoadList() {
     if (titleTransitioning) return;
+    titleTransitioning = true;
+    await playSe('sword.mp3');
     saveListReturnToTitle = true;
     titleScreen.hidden = true;
     gameShell.hidden = false;
     openSaveSlotList('load');
+    titleTransitioning = false;
   }
 
   function readSaveIndexes() {
@@ -2774,7 +2843,7 @@
   function findOpponentInRange(unit, preferredTarget = null) {
     return units
       .filter((candidate) => candidate.side !== unit.side && (!preferredTarget || candidate === preferredTarget) &&
-        isWithinAttackRange(unit, unitDistance(unit, candidate)) && hasLineOfSight(unit, candidate))
+        canAttackUnitTarget(unit, candidate))
       .sort((a, b) => unitDistance(unit, a) - unitDistance(unit, b))[0] ?? null;
   }
 
@@ -2800,6 +2869,18 @@
     return minimum;
   }
 
+  function canAttackUnitTarget(attacker, target) {
+    const footprint = getFootprintSize(target);
+    for (let row = 0; row < footprint.height; row++) {
+      for (let column = 0; column < footprint.width; column++) {
+        const tile = { x: target.x + column, y: target.y + row };
+        const distance = distanceFromUnitToTile(attacker, tile.x, tile.y);
+        if (isWithinAttackRange(attacker, distance) && hasLineOfSight(attacker, tile)) return true;
+      }
+    }
+    return false;
+  }
+
   function getLineTiles(from, to) {
     const reverse = from.x > to.x || (from.x === to.x && from.y > to.y);
     let x = reverse ? to.x : from.x;
@@ -2816,8 +2897,7 @@
     while (crossedX < dx || crossedY < dy) {
       const nextCrossing = (1 + 2 * crossedX) * dy - (1 + 2 * crossedY) * dx;
       if (nextCrossing === 0) {
-        // The ray crosses a grid corner; include both adjacent cells so it cannot slip past a wall corner.
-        tiles.push({ x: x + sx, y }, { x, y: y + sy });
+        // At an exact diagonal, only the diagonal tile is crossed; corner-adjacent tiles do not block the ray.
         x += sx;
         y += sy;
         crossedX++;
@@ -2941,8 +3021,7 @@
 
     const unit = getUnitAtPosition(cursor.x, cursor.y);
     if (rangeMode === 'precision-target') {
-      if (unit?.side === 'enemy' && isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, unit)) &&
-          hasLineOfSight(selectedUnit, unit)) {
+      if (unit?.side === 'enemy' && canAttackUnitTarget(selectedUnit, unit)) {
         showPrecisionConfirmation(unit);
       }
       return;
@@ -2961,7 +3040,7 @@
           isWithinAttackRange(selectedUnit, distanceFromUnitToTile(selectedUnit, obstacle.x, obstacle.y)) &&
           hasLineOfSight(selectedUnit, obstacle, obstacle)) {
         void tryAttackObstacle(obstacle);
-      } else if (unit && hasLineOfSight(selectedUnit, unit)) tryAttackTarget(unit);
+      } else if (unit) tryAttackTarget(unit);
       return;
     }
     if (rangeMode === 'move-confirm') {
@@ -2982,8 +3061,7 @@
 
   async function tryAttackTarget(target) {
     if (!selectedUnit || rangeMode !== 'attack' || target.side === selectedUnit.side) return false;
-    const distance = unitDistance(selectedUnit, target);
-    if (!isWithinAttackRange(selectedUnit, distance) || !hasLineOfSight(selectedUnit, target)) return false;
+    if (!canAttackUnitTarget(selectedUnit, target)) return false;
 
     const attacker = selectedUnit;
     isCombatResolving = true;
@@ -3320,9 +3398,7 @@
   function enterAttackModeIfTargetInRange(unit) {
     if ((unit.side !== currentSide && !(debugMode && unit.side === 'enemy')) || unit.ended || unit.attackUsed) return false;
     const targetInRange = units.some((target) =>
-      target.side !== unit.side &&
-      isWithinAttackRange(unit, unitDistance(unit, target)) &&
-      hasLineOfSight(unit, target)
+      target.side !== unit.side && canAttackUnitTarget(unit, target)
     );
     if (!targetInRange) return false;
 
@@ -3873,7 +3949,10 @@
         }
         const inMoveRange = moveRangeTiles?.has(`${mapX},${mapY}`);
         const attackDistance = attackRangeUnit ? distanceFromUnitToTile(attackRangeUnit, mapX, mapY) : 0;
+        const blockingTerrainTarget = lineOfSightBlockedTiles.has(`${mapX},${mapY}`) &&
+          !obstacles.some((obstacle) => obstacle.x === mapX && obstacle.y === mapY);
         const inAttackRange = attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance) &&
+          !blockingTerrainTarget &&
           hasLineOfSight(attackRangeUnit, { x: mapX, y: mapY });
         const inHateRange = hateRangeUnit && distanceFromUnitToTile(hateRangeUnit, mapX, mapY) <= 8;
         if (inMoveRange || inAttackRange || inHateRange) {
@@ -4062,7 +4141,7 @@
     const cursorIsAttackTarget = cursorUnit && (
       combatTarget === cursorUnit ||
       ((rangeMode === 'attack' || rangeMode === 'precision-target') && selectedUnit && cursorUnit.side !== selectedUnit.side &&
-        isWithinAttackRange(selectedUnit, unitDistance(selectedUnit, cursorUnit))) ||
+        canAttackUnitTarget(selectedUnit, cursorUnit)) ||
       (enemyRangePreview?.mode === 'attack' && enemyRangePreview.target === cursorUnit)
     );
     const cursorIsHateTarget = cursorUnit && rangeMode === 'hate' && cursorUnit.side === 'enemy' &&
