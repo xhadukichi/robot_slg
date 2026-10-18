@@ -3,9 +3,10 @@
   let MAP_HEIGHT = 16;
   const TILE_SIZE = 64;
   const STAGE_ID = '000';
-  const EVENT_SCRIPT_PATH = `Event/Event_${STAGE_ID}.txt`;
-  const BATTLE_SCRIPT_PATH = `Event/Battle_${STAGE_ID}.txt`;
-  const STAGE_CLEAR_FLAG = `Battle_${STAGE_ID}`;
+  let currentStageId = STAGE_ID;
+  const SAVE_FORMAT_VERSION = 1;
+  const SAVE_INDEX_STORAGE_KEY = 'robot-slg-save-index-v1';
+  const SAVE_DATA_STORAGE_KEY = 'robot-slg-save-data-v1';
   const MAX_VIEW_WIDTH = 16;
   const MAX_VIEW_HEIGHT = 12;
   let VIEW_WIDTH = Math.min(MAX_VIEW_WIDTH, MAP_WIDTH);
@@ -26,6 +27,9 @@
   const coordinates = document.querySelector('#coordinates');
   const unitCommand = document.querySelector('#unit-command');
   const attackChoiceCommand = document.querySelector('#attack-choice-command');
+  const itemChoiceCommand = document.querySelector('#item-choice-command');
+  const itemConfirmCommand = document.querySelector('#item-confirm-command');
+  const itemConfirmMessage = document.querySelector('#item-confirm-message');
   const precisionConfirmCommand = document.querySelector('#precision-confirm-command');
   const hateConfirmCommand = document.querySelector('#hate-confirm-command');
   const moveConfirmCommand = document.querySelector('#move-confirm-command');
@@ -33,6 +37,10 @@
   const debugPanel = document.querySelector('#debug-panel');
   const debugUnitSelect = document.querySelector('#debug-unit');
   const emptyCommand = document.querySelector('#empty-command');
+  const saveSlotDialog = document.querySelector('#save-slot-dialog');
+  const saveSlotTitle = document.querySelector('#save-slot-title');
+  const saveSlotList = document.querySelector('#save-slot-list');
+  const saveSlotStatus = document.querySelector('#save-slot-status');
   const attackMessage = document.querySelector('#attack-message');
   const phaseAnnouncement = document.querySelector('#phase-announcement');
   const gameResult = document.querySelector('#game-result');
@@ -74,6 +82,7 @@
   let gameOverOptionsReady = false;
   let gameOverSelection = 0;
   let currentStoryText = '';
+  let currentEventGoto = '';
   let skipStoryReveal = false;
   let battleEventActive = false;
   let battleMessageResolve = null;
@@ -150,6 +159,8 @@
       unitCommand.hidden = true;
       unitStatus.hidden = true;
       attackChoiceCommand.hidden = true;
+      itemChoiceCommand.hidden = true;
+      itemConfirmCommand.hidden = true;
       precisionConfirmCommand.hidden = true;
       hateConfirmCommand.hidden = true;
       moveConfirmCommand.hidden = true;
@@ -271,11 +282,18 @@
   let attackChoiceSelection = 0;
   let precisionConfirmSelection = 0;
   let hateConfirmSelection = 0;
+  let itemChoiceSelection = 0;
+  let itemConfirmSelection = 0;
   let pendingPrecisionTarget = null;
   let moveConfirmSelection = 0;
   let attackMessageTimer = 0;
   let phaseAnnouncementTimer = 0;
   let turnConfirmSelection = 0;
+  let emptyCommandSelection = 0;
+  let saveSlotMode = 'save';
+  let saveListReturnToTitle = false;
+  let customPoints = 0;
+  let playerRoster = [];
   let statusFromCommand = false;
   let isGameOver = false;
   let isEnemyAiRunning = false;
@@ -291,6 +309,7 @@
   const hitEffects = [];
   let unitBaseParameters = new Map();
   let weaponParameters = new Map();
+  let itemParameters = new Map();
   let phaseBgmFiles = { player: 'M002_PC_turn.mp3', enemy: 'M003_EN_turn.mp3' };
   explosionImage.src = 'Unit/Bomb_out.png';
   explosionImage.addEventListener('load', draw);
@@ -377,7 +396,7 @@
       event.preventDefault();
       return;
     }
-    if (battleEventActive || isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden || !attackChoiceCommand.hidden || !precisionConfirmCommand.hidden || !hateConfirmCommand.hidden) return;
+    if (battleEventActive || isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden || !saveSlotDialog.hidden || !attackChoiceCommand.hidden || !itemChoiceCommand.hidden || !itemConfirmCommand.hidden || !precisionConfirmCommand.hidden || !hateConfirmCommand.hidden) return;
     canvas.focus();
     emptyCommand.hidden = true;
     const bounds = canvas.getBoundingClientRect();
@@ -462,6 +481,7 @@
       unitCommand.hidden = true;
       unitStatus.hidden = true;
       emptyCommand.hidden = true;
+      saveSlotDialog.hidden = true;
       cursor.x = mapX;
       cursor.y = mapY;
       scrollToCursor();
@@ -475,7 +495,11 @@
       unitStatus.hidden = true;
       cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
       cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
-      if (!clickedDuringAction) emptyCommand.hidden = false;
+      if (!clickedDuringAction) {
+        emptyCommandSelection = 0;
+        updateEmptyCommandSelection();
+        emptyCommand.hidden = false;
+      }
     }
     scrollToCursor();
   });
@@ -511,6 +535,34 @@
     if (action === 'normal-attack') startAttackSelection();
     else if (action === 'precision-attack') startPrecisionTargetSelection();
     else if (action === 'hate') showHateConfirmation();
+  });
+
+  itemChoiceCommand.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const action = event.target.closest('button')?.dataset.action;
+    if (action === 'select-item') showSpecialEquipmentConfirmation();
+    else if (action === 'cancel-item-choice') {
+      itemChoiceCommand.hidden = true;
+      unitCommand.hidden = false;
+      updateMenuSelection();
+      canvas.focus();
+      draw();
+    }
+  });
+
+  itemConfirmCommand.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const action = event.target.closest('button')?.dataset.action;
+    if (action === 'confirm-item') {
+      itemConfirmCommand.hidden = true;
+      useSpecialEquipment(selectedUnit);
+    } else if (action === 'cancel-item-confirm') {
+      itemConfirmCommand.hidden = true;
+      itemChoiceCommand.hidden = false;
+      updateItemChoiceSelection();
+      canvas.focus();
+      draw();
+    }
   });
 
   precisionConfirmCommand.addEventListener('click', (event) => {
@@ -556,15 +608,51 @@
   emptyCommand.addEventListener('click', (event) => {
     event.stopPropagation();
     if (isCombatResolving || explosionEffects.length) return;
-    if (event.target.closest('button')?.dataset.action !== 'confirm-turn') return;
-    emptyCommand.hidden = true;
-    openTurnConfirmation();
+    const action = event.target.closest('button')?.dataset.action;
+    if (action === 'confirm-turn') {
+      emptyCommand.hidden = true;
+      openTurnConfirmation();
+    } else if (action === 'save' || action === 'load') {
+      openSaveSlotList(action);
+    }
+  });
+
+  saveSlotDialog.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const closeButton = event.target.closest('[data-action="close-save-slots"]');
+    const slotButton = event.target.closest('[data-slot-index]');
+    if (closeButton) {
+      saveSlotDialog.hidden = true;
+      if (saveListReturnToTitle) {
+        saveListReturnToTitle = false;
+        gameShell.hidden = true;
+        titleScreen.hidden = false;
+      } else {
+        emptyCommand.hidden = false;
+      }
+      canvas.focus();
+      draw();
+    } else if (slotButton && saveSlotMode === 'save') {
+      const slotIndex = Number(slotButton.dataset.slotIndex);
+      if (readSaveContents()[slotIndex] &&
+          !window.confirm(`データ${String(slotIndex + 1).padStart(2, '0')}を上書きしますか？`)) return;
+      if (writeSaveGame(slotIndex)) {
+        saveSlotStatus.textContent = `データ ${String(slotIndex + 1).padStart(2, '0')} にセーブしました。`;
+        renderSaveSlots();
+      } else {
+        saveSlotStatus.textContent = 'セーブ情報を保存できませんでした。';
+      }
+    } else if (slotButton && saveSlotMode === 'load') {
+      loadSaveGame(Number(slotButton.dataset.slotIndex));
+    }
   });
 
   function openUnitMenu(unit) {
     selectedUnit = unit;
     pendingPrecisionTarget = null;
     attackChoiceCommand.hidden = true;
+    itemChoiceCommand.hidden = true;
+    itemConfirmCommand.hidden = true;
     precisionConfirmCommand.hidden = true;
     hateConfirmCommand.hidden = true;
     moveConfirmCommand.hidden = true;
@@ -600,9 +688,15 @@
       return;
     }
     if ((selectedUnit.side !== currentSide && !(debugMode && selectedUnit.side === 'enemy')) || selectedUnit.ended) return;
+    if (action === 'item') {
+      showSpecialEquipmentChoice();
+      return;
+    }
     if (action === 'end') {
       unitCommand.hidden = true;
       attackChoiceCommand.hidden = true;
+      itemChoiceCommand.hidden = true;
+      itemConfirmCommand.hidden = true;
       precisionConfirmCommand.hidden = true;
       hateConfirmCommand.hidden = true;
       moveConfirmCommand.hidden = true;
@@ -631,6 +725,8 @@
     hateConfirmCommand.hidden = true;
     rangeMode = action;
     unitCommand.hidden = true;
+    itemChoiceCommand.hidden = true;
+    itemConfirmCommand.hidden = true;
     moveConfirmCommand.hidden = true;
     cursor.x = selectedUnit.x;
     cursor.y = selectedUnit.y;
@@ -764,13 +860,18 @@
     if (selectedUnit) {
       const canAct = (selectedUnit.side === currentSide || (debugMode && selectedUnit.side === 'enemy')) && !selectedUnit.ended;
       const remainingMove = selectedUnit.moveRemaining ?? selectedUnit.moveRange;
+      const item = itemParameters.get(selectedUnit.itemTypeId);
+      const itemUsesRemaining = selectedUnit.itemUsesRemaining ?? 0;
       buttons[0].textContent = `移動(${remainingMove})`;
       buttons[1].textContent = selectedUnit.attackUsed ? '攻撃済み' : selectedUnit.ended ? '攻撃せず終了' : '攻撃';
-      buttons[3].textContent = selectedUnit.ended ? '行動終了済み' : '行動終了';
+      buttons[2].textContent = !item ? '特殊装備' : itemUsesRemaining > 0 ? `特殊装備(${itemUsesRemaining})` : '特殊装備済み';
+      buttons[3].textContent = 'ステータス';
+      buttons[4].textContent = selectedUnit.ended ? '行動終了済み' : '行動終了';
       buttons[0].disabled = !canAct || remainingMove <= 0;
       buttons[1].disabled = !canAct || selectedUnit.attackUsed;
-      buttons[2].disabled = false;
-      buttons[3].disabled = !canAct;
+      buttons[2].disabled = !canAct || !item || itemUsesRemaining <= 0 || !Number.isFinite(item.hpRestore) || item.hpRestore <= 0;
+      buttons[3].disabled = false;
+      buttons[4].disabled = !canAct;
     }
     const available = [...buttons].map((button, index) => index).filter((index) => !buttons[index].disabled);
     if (!available.includes(menuSelectionIndex)) menuSelectionIndex = available[0] ?? 0;
@@ -778,6 +879,73 @@
       button.classList.toggle('selected', index === menuSelectionIndex && !button.disabled);
       button.setAttribute('aria-pressed', String(index === menuSelectionIndex));
     });
+  }
+
+  function showSpecialEquipmentChoice() {
+    const item = itemParameters.get(selectedUnit?.itemTypeId);
+    if (!selectedUnit || !item || selectedUnit.itemUsesRemaining <= 0 ||
+        !Number.isFinite(item.hpRestore) || item.hpRestore <= 0) return;
+    emptyCommand.hidden = true;
+    unitCommand.hidden = true;
+    itemChoiceCommand.querySelector('[data-action="select-item"]').textContent = item.name ?? selectedUnit.itemTypeId;
+    itemChoiceSelection = 0;
+    updateItemChoiceSelection();
+    itemChoiceCommand.hidden = false;
+    canvas.focus();
+    draw();
+  }
+
+  function updateItemChoiceSelection() {
+    itemChoiceCommand.querySelectorAll('button').forEach((button, index) => {
+      button.classList.toggle('selected', index === itemChoiceSelection);
+      button.setAttribute('aria-pressed', String(index === itemChoiceSelection));
+    });
+  }
+
+  function showSpecialEquipmentConfirmation() {
+    const item = itemParameters.get(selectedUnit?.itemTypeId);
+    if (!selectedUnit || !item || selectedUnit.itemUsesRemaining <= 0) return;
+    itemConfirmMessage.textContent = `${item.name ?? selectedUnit.itemTypeId}（HP+${item.hpRestore}）を使用しますか？`;
+    itemChoiceCommand.hidden = true;
+    itemConfirmSelection = 0;
+    updateItemConfirmSelection();
+    itemConfirmCommand.hidden = false;
+    canvas.focus();
+    draw();
+  }
+
+  function updateItemConfirmSelection() {
+    itemConfirmCommand.querySelectorAll('button').forEach((button, index) => {
+      button.classList.toggle('selected', index === itemConfirmSelection);
+      button.setAttribute('aria-pressed', String(index === itemConfirmSelection));
+    });
+  }
+
+  function useSpecialEquipment(unit) {
+    if (!unit) return;
+    const item = itemParameters.get(unit.itemTypeId);
+    const hpRestore = item?.hpRestore;
+    if (!item || unit.itemUsesRemaining <= 0 || !Number.isFinite(hpRestore) || hpRestore <= 0) return;
+
+    const restoredHp = Math.min(hpRestore, Math.max(0, unit.maxHp - unit.hp));
+    unit.hp += restoredHp;
+    unit.itemUsesRemaining -= 1;
+    unit.itemUsed = true;
+    unit.ended = true;
+    pendingMove = null;
+    rangeMode = null;
+    unitCommand.hidden = true;
+    attackChoiceCommand.hidden = true;
+    itemChoiceCommand.hidden = true;
+    itemConfirmCommand.hidden = true;
+    precisionConfirmCommand.hidden = true;
+    hateConfirmCommand.hidden = true;
+    moveConfirmCommand.hidden = true;
+    unitStatus.hidden = true;
+    showAttackMessage(`${unit.id}：特殊装備を使用。HP +${restoredHp}`, 1800);
+    checkUnitCompletion(unit);
+    canvas.focus();
+    draw();
   }
 
   function showUnitStatus(unit, fromCommand) {
@@ -879,6 +1047,7 @@
     titleSelection = titleOptions.indexOf(button);
     updateTitleSelection();
     if (button.dataset.titleAction === 'new') startNewGame();
+    else if (button.dataset.titleAction === 'load') openTitleLoadList();
   });
 
   gameResult.addEventListener('click', (event) => {
@@ -944,6 +1113,7 @@
     if (!confirmKey) return;
     event.preventDefault();
     if (titleOptions[titleSelection]?.dataset.titleAction === 'new') startNewGame();
+    else if (titleOptions[titleSelection]?.dataset.titleAction === 'load') openTitleLoadList();
   });
 
   function updateTitleSelection() {
@@ -957,9 +1127,13 @@
     if (titleTransitioning) return;
     titleTransitioning = true;
     isClearStory = false;
+    currentStageId = STAGE_ID;
+    currentEventGoto = '';
     battleEventActive = false;
     completedBattleEvents.clear();
     eventFlags.clear();
+    customPoints = 0;
+    playerRoster = [];
     introEventImage.src = introImageSource;
     storyStart.textContent = '\u300aGame Start\u300b';
     titleScreen.classList.add('fade-out');
@@ -980,15 +1154,17 @@
     introEvent.hidden = false;
 
     try {
-      const opening = parseEventSection(await loadEventScript(EVENT_SCRIPT_PATH), '\uff2f\uff30');
-      if (!opening.message) throw new Error(`${EVENT_SCRIPT_PATH} にOPのＭＥＳがありません。`);
+      const eventPath = `Event/Event_${currentStageId}.txt`;
+      const opening = parseEventSection(await loadEventScript(eventPath), '\uff2f\uff30');
+      currentEventGoto = opening.goto || '';
+      if (!opening.message) throw new Error(`${eventPath} にOPのＭＥＳがありません。`);
       introEventImage.src = `Unit/${opening.background || introImageSource.split('/').pop()}`;
       await waitForImage(introEventImage);
       if (opening.bgm) setBgm(opening.bgm);
       currentStoryText = opening.message;
     } catch (error) {
       console.error('OPイベントを読み込めませんでした。', error);
-      currentStoryText = `OPイベントを読み込めませんでした。\n${error.message || error}\n${EVENT_SCRIPT_PATH} と素材を確認してください。`;
+      currentStoryText = `OPイベントを読み込めませんでした。\n${error.message || error}\nEvent/Event_${currentStageId}.txt と素材を確認してください。`;
       introEventImage.src = introImageSource;
     }
 
@@ -1018,7 +1194,8 @@
 
   function parseEventSection(source, sectionName) {
     const lines = source.replace(/\r/g, '').split('\n');
-    const sectionIndex = lines.findIndex((line) => line.replace(/\/\/.*$/, '').trim() === sectionName);
+    const normalizedSectionName = sectionName.normalize('NFKC').trim();
+    const sectionIndex = lines.findIndex((line) => line.replace(/\/\/.*$/, '').normalize('NFKC').trim() === normalizedSectionName);
     if (sectionIndex < 0) throw new Error(`${sectionName} セクションがありません。`);
 
     let opened = false;
@@ -1058,7 +1235,8 @@
       if (match) { event.bgm = match[1].trim(); readingMessage = false; continue; }
       if (trimmed === 'フェードイン') { event.fadeIn = true; readingMessage = false; continue; }
       if (trimmed === 'ＭＥＳ') { readingMessage = true; continue; }
-      if (/^GOTO[：:]/i.test(trimmed) || /^ＧＯＴＯ[：:]/.test(trimmed)) break;
+      const gotoMatch = trimmed.normalize('NFKC').match(/^GOTO\s*:\s*(.+)$/i);
+      if (gotoMatch) { event.goto = gotoMatch[1].trim(); break; }
       if (readingMessage) messageLines.push(content);
     }
 
@@ -1074,16 +1252,21 @@
     });
   }
 
-  async function playClearStory() {
+  async function playClearStory(stageId = currentStageId, sectionName = '\uff25\uff30') {
     isClearStory = true;
-    storyStart.textContent = '\u300aClick to Top\u300b';
+    currentEventGoto = '';
+    currentStageId = String(stageId).padStart(3, '0');
+    storyStart.textContent = '\u300aContinue\u300b';
     storyText.textContent = '';
     storyStart.disabled = true;
     skipStoryReveal = false;
     try {
-      const epilogue = parseEventSection(await loadEventScript(EVENT_SCRIPT_PATH), '\uff25\uff30');
-      if (!epilogue.message) throw new Error(`${EVENT_SCRIPT_PATH} にＥＰのＭＥＳがありません。`);
-      introEventImage.src = 'Unit/' + (epilogue.background || 'Event_01_ED.png');
+      const eventPath = `Event/Event_${currentStageId}.txt`;
+      const epilogue = parseEventSection(await loadEventScript(eventPath), sectionName);
+      currentEventGoto = epilogue.goto || '';
+      if (!epilogue.message) throw new Error(`${eventPath} に${sectionName}のＭＥＳがありません。`);
+      const defaultBackground = sectionName.normalize('NFKC').toUpperCase() === 'OP' ? 'Event_01.png' : 'Event_01_ED.png';
+      introEventImage.src = 'Unit/' + (epilogue.background || defaultBackground);
       await waitForImage(introEventImage);
       if (epilogue.bgm) setBgm(epilogue.bgm);
       currentStoryText = epilogue.message;
@@ -1093,6 +1276,26 @@
     }
     storySkip.hidden = false;
     await revealStoryText();
+  }
+
+  async function followEventGoto(target) {
+    const normalized = target.normalize('NFKC').trim();
+    const eventTarget = normalized.match(/^EVENT_(\d+)\s+(.+)$/i);
+    if (eventTarget) {
+      await playClearStory(eventTarget[1], eventTarget[2]);
+      return;
+    }
+    const battleTarget = normalized.match(/^BATTLE_(\d+)$/i);
+    if (battleTarget) {
+      currentStageId = battleTarget[1].padStart(3, '0');
+      isClearStory = false;
+      await loadBattleOpening(currentStageId);
+      return;
+    }
+    currentEventGoto = '';
+    storyText.textContent = `未対応のGOTO先です: ${target}`;
+    storyStart.textContent = '\u300aClick to Top\u300b';
+    storyStart.disabled = false;
   }
 
   async function showClearStory() {
@@ -1198,11 +1401,14 @@
     cameraTarget.y = initialCamera.y;
     unitCommand.hidden = true;
     attackChoiceCommand.hidden = true;
+    itemChoiceCommand.hidden = true;
+    itemConfirmCommand.hidden = true;
     precisionConfirmCommand.hidden = true;
     hateConfirmCommand.hidden = true;
     hateConfirmCommand.hidden = true;
     unitStatus.hidden = true;
     emptyCommand.hidden = true;
+    saveSlotDialog.hidden = true;
     turnConfirm.hidden = true;
     phaseAnnouncement.hidden = true;
     attackMessage.hidden = true;
@@ -1225,9 +1431,13 @@
   }
 
   storyStart.addEventListener('click', () => {
-    if (isClearStory) returnToTitle();
-    else if (battleEventActive) closeBattleMessage();
-    else loadBattleOpening();
+    if (battleEventActive) closeBattleMessage();
+    else if (currentEventGoto) {
+      const next = currentEventGoto;
+      currentEventGoto = '';
+      followEventGoto(next);
+    } else if (isClearStory) returnToTitle();
+    else loadBattleOpening(currentStageId);
   });
 
   storyWindow.addEventListener('click', (event) => {
@@ -1240,8 +1450,9 @@
   });
 
   introEvent.addEventListener('click', () => {
-    if (!battleEventActive || storyStart.disabled) return;
-    closeBattleMessage();
+    if (!battleEventActive) return;
+    if (storyStart.disabled) revealStoryImmediately();
+    else closeBattleMessage();
   });
 
   storySkip.addEventListener('click', () => {
@@ -1257,18 +1468,15 @@
     storyStart.disabled = false;
   }
 
-  async function loadBattleOpening() {
+  async function loadBattleOpening(stageId = currentStageId) {
+    currentStageId = String(stageId).padStart(3, '0');
+    currentEventGoto = '';
+    const battlePath = `Event/Battle_${currentStageId}.txt`;
     storyStart.disabled = true;
     try {
-      const battleScript = await loadEventScript(BATTLE_SCRIPT_PATH);
+      const battleScript = await loadEventScript(battlePath);
       await applyBattleSetup(battleScript);
-      const battleEvents = parseBattleTriggerRecords(battleScript);
-      battleAttackEvents = battleEvents.attacks;
-      battleDefenseEvents = battleEvents.defenses;
-      battleDefeatEvents = battleEvents.defeats;
-      battleObjectDefeatEvent = battleEvents.objectDefeat;
-      battleEndEvent = battleEvents.end;
-      npcDefinitions = parseNpcDefinitions(battleScript);
+      prepareBattleEventData(battleScript);
       const turnZeroMessages = parseBattleMessageRecords(extractEventBlock(battleScript, 'ターン　０'));
       if (!turnZeroMessages.length) throw new Error('ターン　０にＭＥＳがありません。');
       await enterStage();
@@ -1276,12 +1484,22 @@
       announceCurrentTurn();
       playPhaseBgm();
     } catch (error) {
-      console.error(`${BATTLE_SCRIPT_PATH} を読み込めませんでした。`, error);
-      storyText.textContent = `${BATTLE_SCRIPT_PATH} を読み込めませんでした。\n${error.message || error}`;
+      console.error(`${battlePath} を読み込めませんでした。`, error);
+      storyText.textContent = `${battlePath} を読み込めませんでした。\n${error.message || error}`;
       storyStart.disabled = false;
       storySkip.hidden = true;
       introEvent.hidden = false;
     }
+  }
+
+  function prepareBattleEventData(battleScript) {
+    const battleEvents = parseBattleTriggerRecords(battleScript);
+    battleAttackEvents = battleEvents.attacks;
+    battleDefenseEvents = battleEvents.defenses;
+    battleDefeatEvents = battleEvents.defeats;
+    battleObjectDefeatEvent = battleEvents.objectDefeat;
+    battleEndEvent = battleEvents.end;
+    npcDefinitions = parseNpcDefinitions(battleScript);
   }
 
   function showBattleMessage(message) {
@@ -1588,7 +1806,7 @@
       const line = normalizeBattleLine(rawLine);
       const reinforcement = line.match(/^援軍配置\s+(NPC\d+)\s*:\s*\((\d+)\s*,\s*(\d+)\)$/i);
       const cursorCommand = line.match(/^カーソル\s*\((\d+)\s*,\s*(\d+)\)$/);
-      const gotoEpilogue = new RegExp(`^GOTO\\s*:\\s*EVENT_${STAGE_ID}\\s+EP$`, 'i').test(line);
+      const gotoEpilogue = new RegExp(`^GOTO\\s*:\\s*EVENT_${currentStageId}\\s+EP$`, 'i').test(line.normalize('NFKC'));
       if (!reinforcement && !cursorCommand && line !== 'ステージクリア' && !gotoEpilogue) {
         pendingMessageLines.push(rawLine);
         continue;
@@ -1703,7 +1921,7 @@
 
     if (!enemiesRemaining) {
       const clearBlock = battleEndEvent && findBattleConditionBlock(battleEndEvent.lines, 'ALL EN');
-      eventFlags.add(STAGE_CLEAR_FLAG);
+      eventFlags.add(`Battle_${currentStageId}`);
       const reachedEpilogue = clearBlock ? await playBattleEndCommands(clearBlock.lines) : false;
       if (!reachedEpilogue) finishGame('ステージクリア');
     }
@@ -1713,6 +1931,7 @@
     const parameterTable = parseParameterTable(await loadEventScript('Data/Param_table.txt'));
     unitBaseParameters = parameterTable.units;
     weaponParameters = parameterTable.weapons;
+    itemParameters = parameterTable.items;
     const unitLoadouts = new Map([
       ...parseUnitLoadouts(source, 'ADD_Param'),
       ...parseUnitLoadouts(source, 'EN_Param'),
@@ -1779,6 +1998,12 @@
       unit.spriteWidth = baseParameters.spriteWidth ?? unit.spriteWidth ?? TILE_SIZE;
       unit.spriteHeight = baseParameters.spriteHeight ?? unit.spriteHeight ?? TILE_SIZE;
       unit.weaponTypeId = loadout?.weaponTypeId ?? getDefaultWeaponType(unit);
+      unit.armorTypeId = loadout?.armorTypeId ?? unit.armorTypeId ?? '';
+      unit.itemTypeId = loadout?.itemTypeId ?? '';
+      const item = unit.itemTypeId ? itemParameters.get(unit.itemTypeId) : null;
+      if (unit.itemTypeId && !item) throw new Error(`Param_table.txt に ${unit.itemTypeId} の定義がありません。`);
+      unit.itemUsesRemaining = item?.uses ?? 0;
+      unit.itemUsed = false;
       const weapon = weaponParameters.get(unit.weaponTypeId);
       if (!weapon) throw new Error(`Param_table.txt に ${unit.weaponTypeId} の定義がありません。`);
       unit.attackRange = weapon.attackRange ?? unit.attackRange;
@@ -1839,6 +2064,17 @@
       unit.image.src = `Unit/${unit.imageFile ?? `${unit.id}s.png`}`;
     }
     initialUnits.splice(0, initialUnits.length, ...units.map((unit) => ({ ...unit })));
+    playerRoster = units.filter((unit) => unit.side === 'player').map((unit) => {
+      const record = serializeEntity(unit);
+      delete record.x;
+      delete record.y;
+      delete record.moveRemaining;
+      delete record.moveUsed;
+      delete record.attackUsed;
+      delete record.ended;
+      delete record.hateTargetId;
+      return record;
+    });
     await Promise.all([...units, ...obstacles].map((entity) => waitForImage(entity.image)));
 
     impassableTiles.clear();
@@ -1887,6 +2123,7 @@
   function parseParameterTable(source) {
     const units = new Map();
     const weapons = new Map();
+    const items = new Map();
     const unitFields = new Map([
       ['HP', 'hp'], ['\u79fb\u52d5\u529b', 'moveRange'], ['\u56de\u907f', 'evasion'],
       ['\u547d\u4e2d\u88dc\u6b63', 'hitBonus'], ['\u529b', 'strength'], ['\u30b5\u30a4\u30ba', 'size'],
@@ -1895,6 +2132,7 @@
       ['\u5c04\u7a0b', 'attackRange'], ['\u30c0\u30e1\u30fc\u30b8', 'attackPower'], ['\u547d\u4e2d\u7387', 'accuracy'],
       ['SE', 'se'], ['HIT', 'hitEffect'],
     ]);
+    const itemFields = new Map([['効果', 'effect'], ['使用回数', 'uses']]);
     let section = '';
     let currentType = null;
     let currentFields = null;
@@ -1915,16 +2153,17 @@
         const isUnitType = (section === 'PC' && kind.toUpperCase() === 'PC') ||
           (section === 'EN' && kind.toUpperCase() === 'EN');
         const isWeaponType = section === '\u30a6\u30a7\u30dd\u30f3' && kind.toUpperCase() === 'WEP';
-        if (!isUnitType && !isWeaponType) {
+        const isItemType = section === '特殊装備' && kind.toUpperCase() === 'ITEM';
+        if (!isUnitType && !isWeaponType && !isItemType) {
           currentType = null;
           currentFields = null;
           continue;
         }
-        const table = isUnitType ? units : weapons;
+        const table = isUnitType ? units : isWeaponType ? weapons : items;
         if (table.has(typeId)) throw new Error(`Param_table.txt のタイプIDが重複しています: ${typeId}`);
         currentType = {};
         table.set(typeId, currentType);
-        currentFields = isUnitType ? unitFields : weaponFields;
+        currentFields = isUnitType ? unitFields : isWeaponType ? weaponFields : itemFields;
         continue;
       }
 
@@ -1934,6 +2173,13 @@
         continue;
       }
       if (!currentType) continue;
+      if (currentFields === itemFields) {
+        const itemName = line.match(/^「(.+)」$/);
+        if (itemName) {
+          currentType.name = itemName[1];
+          continue;
+        }
+      }
       const fieldMatch = line.match(/^([^:\s]+)\s*(?::\s*|\s+)(.+)$/);
       if (!fieldMatch) continue;
       const fieldName = fieldMatch[1].toUpperCase() === 'SE' || fieldMatch[1].toUpperCase() === 'HIT'
@@ -1942,7 +2188,7 @@
       const value = fieldMatch[2].trim();
       const outputField = currentFields?.get(fieldName);
       if (!outputField) continue;
-      if (outputField === 'se' || outputField === 'hitEffect') currentType[outputField] = value;
+      if (outputField === 'se' || outputField === 'hitEffect' || outputField === 'effect') currentType[outputField] = value;
       else {
         const numericValue = Number(value.replace(/^\+/, ''));
         if (Number.isFinite(numericValue)) currentType[outputField] = numericValue;
@@ -1955,7 +2201,11 @@
       const dimensions = sizeDimensions.get(parameters.size);
       if (dimensions) [parameters.spriteWidth, parameters.spriteHeight] = dimensions;
     }
-    return { units, weapons };
+    for (const parameters of items.values()) {
+      const hpEffect = parameters.effect?.match(/^HP\s*\+\s*(\d+)$/i);
+      if (hpEffect) parameters.hpRestore = Number(hpEffect[1]);
+    }
+    return { units, weapons, items };
   }
 
   function tryExtractEventBlock(source, blockName) {
@@ -1981,6 +2231,10 @@
       if (unitTypeMatch) current.unitTypeId = unitTypeMatch[1];
       const weaponMatch = line.match(/^(Type_WEP_\d+)$/i);
       if (weaponMatch) current.weaponTypeId = weaponMatch[1];
+      const armorMatch = line.match(/^(Type_ARM_\d+)$/i);
+      if (armorMatch) current.armorTypeId = armorMatch[1];
+      const itemMatch = line.match(/^(Type_ITEM_\d+)$/i);
+      if (itemMatch) current.itemTypeId = itemMatch[1];
     }
     return loadouts;
   }
@@ -2085,6 +2339,256 @@
     updateTurnConfirmSelection();
     canvas.focus();
     draw();
+  }
+
+  function openSaveSlotList(mode) {
+    saveSlotMode = mode;
+    saveSlotTitle.textContent = mode === 'save' ? 'セーブ箇所一覧' : 'ロード箇所一覧';
+    saveSlotStatus.textContent = mode === 'save' ? '枠を選ぶとセーブデータを記録します。' : '読み込むデータを選択してください。';
+    renderSaveSlots();
+    emptyCommand.hidden = true;
+    saveSlotDialog.hidden = false;
+    canvas.focus();
+    draw();
+  }
+
+  function openTitleLoadList() {
+    if (titleTransitioning) return;
+    saveListReturnToTitle = true;
+    titleScreen.hidden = true;
+    gameShell.hidden = false;
+    openSaveSlotList('load');
+  }
+
+  function readSaveIndexes() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SAVE_INDEX_STORAGE_KEY) || '[]');
+      return Array.from({ length: 10 }, (_, index) => parsed[index] ?? null);
+    } catch (error) {
+      console.warn('セーブインデックスを読み込めませんでした。', error);
+      return Array(10).fill(null);
+    }
+  }
+
+  function readSaveContents() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SAVE_DATA_STORAGE_KEY) || '[]');
+      return Array.from({ length: 10 }, (_, index) => parsed[index] ?? null);
+    } catch (error) {
+      console.warn('セーブ本体を読み込めませんでした。', error);
+      return Array(10).fill(null);
+    }
+  }
+
+  function serializeEntity(entity) {
+    return Object.fromEntries(Object.entries(entity).filter(([key, value]) =>
+      key !== 'image' && (value === null || ['string', 'number', 'boolean'].includes(typeof value))
+    ));
+  }
+
+  function createSaveSnapshot(savedAt) {
+    return {
+      formatVersion: SAVE_FORMAT_VERSION,
+      savedAt,
+      common: {
+        playerRoster: playerRoster.map((unit) => ({ ...unit })),
+        flags: [...eventFlags],
+        customPoints,
+        stageNo: currentStageId,
+        eventNo: currentStageId,
+      },
+      battle: {
+        stageNo: currentStageId,
+        eventPosition: 'player-input',
+        units: units.map(serializeEntity),
+        obstacles: obstacles.map(serializeEntity),
+        impassableTiles: [...impassableTiles],
+        lineOfSightBlockedTiles: [...lineOfSightBlockedTiles],
+        phase: currentSide,
+        turnCounts: { ...sideTurnCounts },
+        completedEvents: [...completedBattleEvents],
+        cursor: { ...cursor },
+        camera: { ...camera },
+        bgm: { filename: currentBgm, time: loadedBgm === currentBgm ? bgmAudio.currentTime : 0 },
+        phaseBgmFiles: { ...phaseBgmFiles },
+      },
+    };
+  }
+
+  function writeSaveGame(slotIndex) {
+    if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= 10 || currentSide !== 'player' || debugMode ||
+        isGameOver || isEnemyAiRunning || isCombatResolving || isUnitMoving || battleEventActive || phaseInputLocked ||
+        pendingMove || rangeMode) return false;
+    const savedAt = new Date().toISOString();
+    const indexes = readSaveIndexes();
+    const contents = readSaveContents();
+    indexes[slotIndex] = { version: SAVE_FORMAT_VERSION, stageNo: currentStageId, turnCount: sideTurnCounts.player, savedAt };
+    contents[slotIndex] = createSaveSnapshot(savedAt);
+    try {
+      localStorage.setItem(SAVE_DATA_STORAGE_KEY, JSON.stringify(contents));
+      localStorage.setItem(SAVE_INDEX_STORAGE_KEY, JSON.stringify(indexes));
+      return true;
+    } catch (error) {
+      console.warn('セーブデータを書き込めませんでした。', error);
+      return false;
+    }
+  }
+
+  async function loadSaveGame(slotIndex) {
+    const snapshot = readSaveContents()[slotIndex];
+    if (!snapshot) return;
+    if (snapshot.formatVersion !== SAVE_FORMAT_VERSION) {
+      saveSlotStatus.textContent = 'このセーブデータの形式には対応していません。';
+      return;
+    }
+    const stageId = String(snapshot.battle?.stageNo ?? '').padStart(3, '0');
+    if (!/^\d{3}$/.test(stageId)) {
+      saveSlotStatus.textContent = 'ステージNoが正しくありません。';
+      return;
+    }
+    saveSlotStatus.textContent = 'セーブデータを読み込んでいます…';
+    try {
+      currentStageId = stageId;
+      const battleScript = await loadEventScript(`Event/Battle_${currentStageId}.txt`);
+      await applyBattleSetup(battleScript);
+      prepareBattleEventData(battleScript);
+
+      const restoredUnits = snapshot.battle.units.map((record) => {
+        const image = new Image();
+        image.src = `Unit/${record.imageFile ?? `${record.id}s.png`}`;
+        return { ...record, image };
+      });
+      const restoredObstacles = snapshot.battle.obstacles.map((record) => {
+        const image = new Image();
+        image.src = `Unit/${record.imageFile}`;
+        return { ...record, image };
+      });
+      await Promise.all([...restoredUnits, ...restoredObstacles].map((entity) => waitForImage(entity.image)));
+      units.splice(0, units.length, ...restoredUnits);
+      obstacles.splice(0, obstacles.length, ...restoredObstacles);
+      impassableTiles.clear();
+      for (const tile of snapshot.battle.impassableTiles ?? []) impassableTiles.add(tile);
+      lineOfSightBlockedTiles.clear();
+      for (const tile of snapshot.battle.lineOfSightBlockedTiles ?? []) lineOfSightBlockedTiles.add(tile);
+      eventFlags.clear();
+      for (const flag of snapshot.common.flags ?? []) eventFlags.add(flag);
+      completedBattleEvents.clear();
+      for (const eventName of snapshot.battle.completedEvents ?? []) completedBattleEvents.add(eventName);
+      playerRoster = snapshot.common.playerRoster ?? [];
+      customPoints = Number.isFinite(snapshot.common.customPoints) ? snapshot.common.customPoints : 0;
+      currentSide = snapshot.battle.phase === 'enemy' ? 'enemy' : 'player';
+      sideTurnCounts.player = Math.max(1, Number(snapshot.battle.turnCounts?.player) || 1);
+      sideTurnCounts.enemy = Math.max(1, Number(snapshot.battle.turnCounts?.enemy) || 1);
+      phaseBgmFiles = snapshot.battle.phaseBgmFiles ?? phaseBgmFiles;
+      cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, Number(snapshot.battle.cursor?.x) || 0));
+      cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, Number(snapshot.battle.cursor?.y) || 0));
+      const maxCameraX = Math.max(0, MAP_WIDTH - VIEW_WIDTH);
+      const maxCameraY = Math.max(0, MAP_HEIGHT - VIEW_HEIGHT);
+      camera.x = Math.max(0, Math.min(maxCameraX, Number(snapshot.battle.camera?.x) || 0));
+      camera.y = Math.max(0, Math.min(maxCameraY, Number(snapshot.battle.camera?.y) || 0));
+      cameraTarget.x = camera.x;
+      cameraTarget.y = camera.y;
+
+      selectedUnit = null;
+      combatTarget = null;
+      rangeMode = null;
+      pendingMove = null;
+      pendingPrecisionTarget = null;
+      debugMode = false;
+      isGameOver = false;
+      isEnemyAiRunning = false;
+      isCombatResolving = false;
+      isUnitMoving = false;
+      phaseInputLocked = false;
+      explosionEffects.length = 0;
+      hitEffects.length = 0;
+      gameResult.hidden = true;
+      unitCommand.hidden = true;
+      unitStatus.hidden = true;
+      emptyCommand.hidden = true;
+      saveSlotDialog.hidden = true;
+      turnConfirm.hidden = true;
+      titleScreen.hidden = true;
+      introEvent.hidden = true;
+      gameShell.hidden = false;
+      saveListReturnToTitle = false;
+      updatePhaseLabel();
+      draw();
+      canvas.focus();
+      await restoreBgm(snapshot.battle.bgm);
+      if (currentSide === 'enemy') runEnemyTurn();
+    } catch (error) {
+      console.error('セーブデータを読み込めませんでした。', error);
+      saveSlotStatus.textContent = `読み込みに失敗しました: ${error.message || error}`;
+    }
+  }
+
+  async function restoreBgm(savedBgm) {
+    const filename = savedBgm?.filename || phaseBgmFiles[currentSide];
+    await fadeOutBgm();
+    currentBgm = filename;
+    loadedBgm = '';
+    startCurrentBgm();
+    const seek = () => {
+      if (loadedBgm !== filename || !Number.isFinite(savedBgm?.time) || savedBgm.time <= 0) return;
+      try {
+        bgmAudio.currentTime = Math.min(savedBgm.time, Math.max(0, bgmAudio.duration - 0.1));
+      } catch { /* Track may not be seekable. */ }
+    };
+    if (bgmAudio.readyState >= 1) seek();
+    else bgmAudio.addEventListener('loadedmetadata', seek, { once: true });
+  }
+
+  function renderSaveSlots() {
+    const saveIndexes = readSaveIndexes();
+    const saveContents = readSaveContents();
+    saveSlotList.replaceChildren();
+    for (let index = 1; index <= 10; index += 1) {
+      const snapshot = saveContents[index - 1];
+      const record = saveIndexes[index - 1] ?? (snapshot ? {
+        stageNo: snapshot.common?.stageNo,
+        turnCount: snapshot.battle?.turnCounts?.player,
+        savedAt: snapshot.savedAt,
+      } : null);
+      const slot = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.slotIndex = String(index - 1);
+      button.disabled = saveSlotMode === 'load' && !snapshot;
+      if (record) {
+        const stage = document.createElement('strong');
+        stage.textContent = `【データ${toFullWidthNumber(String(index).padStart(2, '0'))}】`;
+        const date = document.createElement('span');
+        date.className = 'save-slot-date';
+        const parsedDate = new Date(record.savedAt);
+        date.textContent = Number.isNaN(parsedDate.getTime()) ? '日時不明' : formatSaveDate(parsedDate);
+        const details = document.createElement('span');
+        details.className = 'save-slot-details';
+        details.textContent = `ステージ${record.stageNo}　ターン${toFullWidthNumber(record.turnCount)}`;
+        button.append(stage, date, details);
+      } else {
+        const slotName = document.createElement('strong');
+        slotName.textContent = `【データ${toFullWidthNumber(String(index).padStart(2, '0'))}】`;
+        const emptyLabel = document.createElement('span');
+        emptyLabel.className = 'save-slot-empty';
+        emptyLabel.textContent = '　　空き';
+        button.append(slotName, emptyLabel);
+      }
+      slot.append(button);
+      saveSlotList.append(slot);
+    }
+  }
+
+  function formatSaveDate(date) {
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+
+  function updateEmptyCommandSelection() {
+    emptyCommand.querySelectorAll('button').forEach((button, index) => {
+      button.classList.toggle('selected', index === emptyCommandSelection);
+      button.setAttribute('aria-pressed', String(index === emptyCommandSelection));
+    });
   }
 
   function updateTurnConfirmSelection() {
@@ -2400,9 +2904,12 @@
   }
 
   function activateCurrentTile() {
+    if (!saveSlotDialog.hidden) {
+      saveSlotDialog.querySelector('[data-action="close-save-slots"]').click();
+      return;
+    }
     if (!emptyCommand.hidden) {
-      emptyCommand.hidden = true;
-      openTurnConfirmation();
+      emptyCommand.querySelectorAll('button')[emptyCommandSelection]?.click();
       return;
     }
     emptyCommand.hidden = true;
@@ -2413,6 +2920,14 @@
     }
     if (!attackChoiceCommand.hidden) {
       attackChoiceCommand.querySelectorAll('button')[attackChoiceSelection]?.click();
+      return;
+    }
+    if (!itemConfirmCommand.hidden) {
+      itemConfirmCommand.querySelectorAll('button')[itemConfirmSelection]?.click();
+      return;
+    }
+    if (!itemChoiceCommand.hidden) {
+      itemChoiceCommand.querySelectorAll('button')[itemChoiceSelection]?.click();
       return;
     }
     if (!hateConfirmCommand.hidden) {
@@ -2745,8 +3260,14 @@
     setBgm(message === 'ステージクリア' ? 'M005_Result.mp3' : 'M006_Event.mp3');
     unitCommand.hidden = true;
     moveConfirmCommand.hidden = true;
+    attackChoiceCommand.hidden = true;
+    itemChoiceCommand.hidden = true;
+    itemConfirmCommand.hidden = true;
+    precisionConfirmCommand.hidden = true;
+    hateConfirmCommand.hidden = true;
     unitStatus.hidden = true;
     emptyCommand.hidden = true;
+    saveSlotDialog.hidden = true;
     turnConfirm.hidden = true;
     rangeMode = null;
     gameResultMessage.textContent = message;
@@ -2816,8 +3337,28 @@
   }
 
   function cancelCurrentAction() {
+    if (!saveSlotDialog.hidden) {
+      saveSlotDialog.querySelector('[data-action="close-save-slots"]').click();
+      return;
+    }
     if (!emptyCommand.hidden) {
       emptyCommand.hidden = true;
+      canvas.focus();
+      draw();
+      return;
+    }
+    if (!itemConfirmCommand.hidden) {
+      itemConfirmCommand.hidden = true;
+      itemChoiceCommand.hidden = false;
+      updateItemChoiceSelection();
+      canvas.focus();
+      draw();
+      return;
+    }
+    if (!itemChoiceCommand.hidden) {
+      itemChoiceCommand.hidden = true;
+      unitCommand.hidden = false;
+      updateMenuSelection();
       canvas.focus();
       draw();
       return;
@@ -3545,6 +4086,8 @@
       positionPanel(unitCommand, selectedUnit);
     }
     if (!attackChoiceCommand.hidden && selectedUnit) positionPanel(attackChoiceCommand, selectedUnit);
+    if (!itemChoiceCommand.hidden && selectedUnit) positionPanel(itemChoiceCommand, selectedUnit);
+    if (!itemConfirmCommand.hidden && selectedUnit) positionPanel(itemConfirmCommand, selectedUnit);
     if (!precisionConfirmCommand.hidden && selectedUnit) positionPanel(precisionConfirmCommand, selectedUnit);
     if (!hateConfirmCommand.hidden && selectedUnit) positionPanel(hateConfirmCommand, selectedUnit);
     if (!moveConfirmCommand.hidden && selectedUnit) positionPanel(moveConfirmCommand, selectedUnit);
@@ -3569,7 +4112,7 @@
     mapScrollbars.x.setAttribute('aria-valuetext', `左端のマス ${Math.round(camera.x) + 1}`);
     mapScrollbars.y.setAttribute('aria-valuetext', `上端のマス ${Math.round(camera.y) + 1}`);
     touchControls.hidden = isGameOver ||
-      (emptyCommand.hidden && unitCommand.hidden && attackChoiceCommand.hidden && precisionConfirmCommand.hidden && hateConfirmCommand.hidden && unitStatus.hidden && turnConfirm.hidden && !rangeMode);
+      (emptyCommand.hidden && saveSlotDialog.hidden && unitCommand.hidden && attackChoiceCommand.hidden && itemChoiceCommand.hidden && itemConfirmCommand.hidden && precisionConfirmCommand.hidden && hateConfirmCommand.hidden && unitStatus.hidden && turnConfirm.hidden && !rangeMode);
   }
 
   function positionPanel(panel, unit) {
@@ -3593,7 +4136,10 @@
   canvas.addEventListener('keydown', (event) => {
     if (battleEventActive) {
       const confirmKey = event.key === ' ' || event.key === 'Enter' || event.key.toLowerCase() === 'x';
-      if (confirmKey && !storyStart.disabled) closeBattleMessage();
+      if (confirmKey) {
+        if (storyStart.disabled) revealStoryImmediately();
+        else closeBattleMessage();
+      }
       event.preventDefault();
       return;
     }
@@ -3620,6 +4166,14 @@
       }
     }
 
+    if (!emptyCommand.hidden && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      const buttonCount = emptyCommand.querySelectorAll('button').length;
+      emptyCommandSelection = (emptyCommandSelection + (event.key === 'ArrowDown' ? 1 : buttonCount - 1)) % buttonCount;
+      updateEmptyCommandSelection();
+      return;
+    }
+
     const key = event.key.toLowerCase();
     if (event.key === 'Escape' || key === 'z') {
       event.preventDefault();
@@ -3643,6 +4197,20 @@
       } while (buttons[nextIndex].disabled && nextIndex !== attackChoiceSelection);
       attackChoiceSelection = nextIndex;
       updateAttackChoiceSelection();
+      return;
+    }
+
+    if (!itemChoiceCommand.hidden && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      itemChoiceSelection = 1 - itemChoiceSelection;
+      updateItemChoiceSelection();
+      return;
+    }
+
+    if (!itemConfirmCommand.hidden && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      itemConfirmSelection = 1 - itemConfirmSelection;
+      updateItemConfirmSelection();
       return;
     }
 
@@ -3680,7 +4248,7 @@
       return;
     }
 
-    if (!unitCommand.hidden || !attackChoiceCommand.hidden || !precisionConfirmCommand.hidden || !hateConfirmCommand.hidden) return;
+    if (!unitCommand.hidden || !attackChoiceCommand.hidden || !itemChoiceCommand.hidden || !itemConfirmCommand.hidden || !precisionConfirmCommand.hidden || !hateConfirmCommand.hidden) return;
     const direction = directions[event.key];
     if (!direction) return;
     event.preventDefault();

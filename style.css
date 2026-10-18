@@ -305,6 +305,38 @@ h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
   font: 600 13px/1.5 "Yu Gothic UI", Meiryo, sans-serif;
   white-space: normal;
 }
+.save-slot-dialog {
+  position: absolute;
+  z-index: 5;
+  top: 50%;
+  left: 50%;
+  width: min(560px, calc(100% - 24px));
+  max-height: min(80%, 520px);
+  overflow: auto;
+  transform: translate(-50%, -50%);
+  padding: 16px;
+  border: 1px solid #f1d978;
+  border-radius: 5px;
+  background: #1a241eef;
+  color: #f2e9d6;
+  box-shadow: 0 10px 36px #000b;
+}
+.save-slot-dialog[hidden] { display: none; }
+.save-slot-dialog h2 { margin: 0 0 12px; font-size: 17px; }
+.save-slot-dialog ol { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 0 14px; padding: 0; list-style: none; }
+.save-slot-dialog li button { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; align-items: center; width: 100%; min-height: 48px; padding: 5px 7px; border: 1px solid #637261; border-radius: 3px; background: #202b22; color: #c8d1c5; font: 11px/1.35 "Yu Gothic UI", Meiryo, sans-serif; text-align: left; cursor: pointer; }
+.save-slot-dialog li button:hover:not(:disabled), .save-slot-dialog li button:focus-visible { border-color: #f1d978; color: #ffe2a5; outline: none; }
+.save-slot-dialog li button:disabled { opacity: .72; cursor: default; }
+.save-slot-dialog li button strong { grid-column: 1; grid-row: 1; color: #f1d978; white-space: nowrap; }
+.save-slot-dialog li button .save-slot-date { grid-column: 2; grid-row: 1; justify-self: end; white-space: nowrap; }
+.save-slot-dialog li button .save-slot-details { grid-column: 1 / -1; grid-row: 2; padding-left: 1em; white-space: nowrap; }
+.save-slot-dialog li button .save-slot-empty { grid-column: 1 / -1; grid-row: 2; white-space: nowrap; }
+.save-slot-dialog p { min-height: 1.4em; margin: 0 0 10px; color: #a9b9ab; font-size: 12px; }
+.save-slot-dialog > button { width: 100%; padding: 7px; border: 1px solid #637261; border-radius: 4px; background: #29392e; color: #e6eee8; font: 600 13px "Yu Gothic UI", Meiryo, sans-serif; cursor: pointer; }
+.save-slot-dialog > button:hover, .save-slot-dialog > button:focus-visible { border-color: #f1d978; color: #f1d978; }
+@media (max-width: 560px) {
+  .save-slot-dialog ol { grid-template-columns: 1fr; }
+}
 
 .unit-status {
   position: absolute;

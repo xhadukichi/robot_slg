@@ -45,7 +45,7 @@ Event_000
 		
 		彼女はシャイニング・エッジのアジトに迎えられた。
 
-		GOTO：Setting
+		GOTO：Event_001　ＯＰ
 	｝
 ｝
 

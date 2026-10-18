@@ -15,7 +15,7 @@
         <h1>Ｒｏｂｏｔ＿ＳＬＧ（仮）</h1>
         <div class="title-options" role="menu" aria-label="タイトルメニュー">
           <button type="button" data-title-action="new" role="menuitem">Ｎｅｗ　Ｇａｍｅ</button>
-          <button type="button" data-title-action="load" role="menuitem" aria-disabled="true">Ｌｏａｄ　Ｇａｍｅ</button>
+          <button type="button" data-title-action="load" role="menuitem">Ｌｏａｄ　Ｇａｍｅ</button>
         </div>
       </div>
     </section>
@@ -47,6 +47,7 @@
         <div id="unit-command" class="unit-command" hidden>
           <button type="button" data-action="move">移動</button>
           <button type="button" data-action="attack">攻撃</button>
+          <button type="button" data-action="item">特殊装備</button>
           <button type="button" data-action="status">ステータス</button>
           <button type="button" data-action="end">行動終了</button>
         </div>
@@ -54,6 +55,15 @@
           <button type="button" data-action="normal-attack">通常攻撃</button>
           <button type="button" data-action="precision-attack">精密攻撃</button>
           <button type="button" data-action="hate">ヘイト</button>
+        </div>
+        <div id="item-choice-command" class="unit-command" hidden>
+          <button type="button" data-action="select-item"></button>
+          <button type="button" data-action="cancel-item-choice">キャンセル</button>
+        </div>
+        <div id="item-confirm-command" class="unit-command precision-confirm-command" hidden>
+          <div id="item-confirm-message" class="precision-confirm-message"></div>
+          <button type="button" data-action="confirm-item">はい</button>
+          <button type="button" data-action="cancel-item-confirm">キャンセル</button>
         </div>
         <div id="precision-confirm-command" class="unit-command precision-confirm-command" hidden>
           <div class="precision-confirm-message">移動を捨てて命中精度を向上させます</div>
@@ -84,6 +94,14 @@
         </section>
         <div id="empty-command" class="unit-command empty-command" hidden>
           <button type="button" data-action="confirm-turn">ターン終了</button>
+          <button type="button" data-action="save">セーブ</button>
+          <button type="button" data-action="load">ロード</button>
+        </div>
+        <div id="save-slot-dialog" class="save-slot-dialog" role="dialog" aria-modal="true" aria-labelledby="save-slot-title" hidden>
+          <h2 id="save-slot-title">セーブ箇所一覧</h2>
+          <ol id="save-slot-list"></ol>
+          <p id="save-slot-status" aria-live="polite"></p>
+          <button type="button" data-action="close-save-slots">閉じる</button>
         </div>
         <div id="attack-message" class="attack-message" role="status" aria-live="polite" hidden>Atack!</div>
         <div id="phase-announcement" class="phase-announcement" role="status" aria-live="polite" hidden></div>
