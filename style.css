@@ -106,6 +106,7 @@ body {
   color: #ffe5a3;
   font: 700 clamp(14px, 1.5vw, 18px)/1.6 "Yu Gothic UI", Meiryo, sans-serif;
 }
+.story-window.system-message .story-text { color: #ffe45c; }
 .story-window {
   position: absolute;
   z-index: 1;

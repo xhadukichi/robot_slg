@@ -1,0 +1,3 @@
+// Shared unit parameter types. Battle files refer to these IDs between image and coordinates.
+type_E-01 移動力=5 射程=5 ダメージ=5 画像幅=64 画像高さ=64
+type_E-02 移動力=5 射程=5 ダメージ=5 画像幅=64 画像高さ=64

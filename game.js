@@ -68,6 +68,7 @@
   let titleOpening = false;
   let titleIntroComplete = false;
   let clearPromptReady = false;
+  let battleEndContinueResolve = null;
   let clearTransitioning = false;
   let isClearStory = false;
   let gameOverOptionsReady = false;
@@ -79,7 +80,9 @@
   let battleAttackEvents = new Map();
   let battleDefenseEvents = new Map();
   let battleDefeatEvents = new Map();
+  let battleObjectDefeatEvent = null;
   let battleEndEvent = null;
+  let npcDefinitions = new Map();
   const eventFlags = new Set();
   const completedBattleEvents = new Set();
 
@@ -884,7 +887,15 @@
       chooseGameOverAction(option.dataset.gameOverAction);
       return;
     }
-    if (clearPromptReady && !clearTransitioning) showClearStory();
+    if (clearPromptReady && !clearTransitioning) {
+      if (battleEndContinueResolve) {
+        const resolve = battleEndContinueResolve;
+        battleEndContinueResolve = null;
+        resolve();
+      } else {
+        showClearStory();
+      }
+    }
   });
 
   window.addEventListener('keydown', (event) => {
@@ -904,7 +915,13 @@
     }
     if (!clearPromptReady || clearTransitioning) return;
     event.preventDefault();
-    showClearStory();
+    if (battleEndContinueResolve) {
+      const resolve = battleEndContinueResolve;
+      battleEndContinueResolve = null;
+      resolve();
+    } else {
+      showClearStory();
+    }
   });
 
   window.addEventListener('keydown', (event) => {
@@ -1249,7 +1266,9 @@
       battleAttackEvents = battleEvents.attacks;
       battleDefenseEvents = battleEvents.defenses;
       battleDefeatEvents = battleEvents.defeats;
+      battleObjectDefeatEvent = battleEvents.objectDefeat;
       battleEndEvent = battleEvents.end;
+      npcDefinitions = parseNpcDefinitions(battleScript);
       const turnZeroMessages = parseBattleMessageRecords(extractEventBlock(battleScript, 'ターン　０'));
       if (!turnZeroMessages.length) throw new Error('ターン　０にＭＥＳがありません。');
       await enterStage();
@@ -1272,6 +1291,7 @@
       currentStoryText = message;
       storyText.textContent = '';
       storySpeaker.textContent = activeBattleSpeaker;
+      storyWindow.classList.toggle('system-message', activeBattleSystemMessage);
       storyStart.textContent = '\u300aContinue\u300b';
       storySkip.hidden = true;
       skipStoryReveal = false;
@@ -1288,6 +1308,7 @@
     introEvent.classList.remove('battle-event');
     storySkip.hidden = true;
     storySpeaker.textContent = '';
+    storyWindow.classList.remove('system-message');
     storyStart.textContent = '\u300aGame Start\u300b';
     canvas.focus();
     const resolveMessage = battleMessageResolve;
@@ -1296,23 +1317,30 @@
   }
 
   let activeBattleSpeaker = '';
+  let activeBattleSystemMessage = false;
 
   async function playBattleMessages(messages) {
     for (const message of messages) {
+      // MESのユニットIDはカーソル移動先。発話者名とは独立して扱う。
       if (message.followCursor) {
-        const target = units.find((unit) => unit.id === message.unitId);
+        const targetId = normalizeUnitId(message.unitId);
+        const target = units.find((unit) => normalizeUnitId(unit.id) === targetId);
         if (target) {
           cursor.x = target.x;
           cursor.y = target.y;
           scrollToCursor();
           await waitForCameraToStop();
           draw();
+        } else {
+          console.warn(`MESのカーソル移動先 ${targetId} が配置されていません。`);
         }
       }
       activeBattleSpeaker = message.speaker;
+      activeBattleSystemMessage = message.systemMessage;
       await showBattleMessage(message.text);
     }
     activeBattleSpeaker = '';
+    activeBattleSystemMessage = false;
     closeBattleMessage();
   }
 
@@ -1324,6 +1352,7 @@
     const attacks = new Map();
     const defenses = new Map();
     const defeats = new Map();
+    let objectDefeat = null;
     let end = null;
     const names = source.replace(/\r/g, '').split('\n')
       .map((line) => line.trim())
@@ -1350,13 +1379,15 @@
       if (defeatName?.[1] === '100') {
         end = { name, lines };
       } else if (defeatName) {
+        const objectCondition = lines.map(normalizeBattleLine).find((line) => line === 'OBJ');
         const condition = lines.map(normalizeBattleLine).find((line) => /^PC\d+$/.test(line));
         const match = condition?.match(/^PC(\d+)$/);
-        if (match) defeats.set(`PC${match[1].padStart(2, '0')}`, { name, messages });
+        if (objectCondition && messages.length) objectDefeat = { name, messages };
+        else if (match) defeats.set(`PC${match[1].padStart(2, '0')}`, { name, messages });
       }
     }
 
-    return { attacks, defenses, defeats, end };
+    return { attacks, defenses, defeats, objectDefeat, end };
   }
 
   async function enterStage() {
@@ -1415,10 +1446,14 @@
     let command = null;
     let body = [];
     const saveMessage = () => {
-      const text = body.join('\n').trim();
+      const rawText = body.join('\n').trim();
+      const text = rawText.startsWith('「') && rawText.endsWith('」')
+        ? rawText.slice(1, -1).trim()
+        : rawText;
       if (!command || !text) return;
       messages.push({
         speaker: normalizeBattleLine(command.speaker) === 'システムメッセージ' ? '' : command.speaker,
+        systemMessage: normalizeBattleLine(command.speaker) === 'システムメッセージ',
         unitId: command.unitId,
         followCursor: command.followCursor,
         text,
@@ -1427,12 +1462,12 @@
 
     for (const line of lines) {
       const normalizedLine = normalizeBattleLine(line);
-      const targetedCommand = normalizedLine.match(/^MES\s+(.+?)\s+(PC\d+)\s+([YN])$/i);
+      const targetedCommand = normalizedLine.match(/^MES\s+(.+?)\s+((?:PC|EN|NPC)\d+)\s+([YN])$/i);
       const untargetedCommand = targetedCommand ? null : normalizedLine.match(/^MES\s+(.+)$/i);
       const nextCommand = targetedCommand
         ? {
           speaker: targetedCommand[1].trim(),
-          unitId: `PC${targetedCommand[2].match(/\d+/)[0].padStart(2, '0')}`,
+          unitId: normalizeUnitId(targetedCommand[2]),
           followCursor: targetedCommand[3] === 'Y',
         }
         : untargetedCommand
@@ -1455,7 +1490,7 @@
   }
 
   function isBattleDirective(line) {
-    return /^(?:IF\s+PC\d+|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
+    return /^(?:IF\s+PC\d+|IF\s+座標\s+PC\d+|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
       /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|フラグ\s+ON\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
   }
 
@@ -1494,8 +1529,10 @@
   function selectBattleIfBranches(lines) {
     const selectedLines = [];
     for (let index = 0; index < lines.length; index++) {
-      const condition = normalizeBattleLine(lines[index]).match(/^IF\s+(PC\d+)$/i);
-      if (!condition) {
+      const normalizedLine = normalizeBattleLine(lines[index]);
+      const aliveCondition = normalizedLine.match(/^IF\s+(PC\d+)$/i);
+      const coordinateCondition = normalizedLine.match(/^IF\s+座標\s+(PC\d+)\s*\((\d+)\s*,\s*(\d+)\)\s*\((\d+)\s*,\s*(\d+)\)$/i);
+      if (!aliveCondition && !coordinateCondition) {
         selectedLines.push(lines[index]);
         continue;
       }
@@ -1509,13 +1546,122 @@
         elseIndex++;
       }
       const elseBlock = hasElse ? extractBattleBraceBlock(lines, elseIndex) : null;
-      const unitId = condition[1].toUpperCase().replace(/(\d+)/, (_, number) => number.padStart(2, '0'));
-      const unitIsAlive = units.some((unit) => unit.id === unitId);
-      const chosen = unitIsAlive ? thenBlock : elseBlock;
+      let conditionMet;
+      if (coordinateCondition) {
+        const unit = units.find((candidate) => candidate.id === normalizeUnitId(coordinateCondition[1]));
+        if (unit) {
+          const x1 = Number(coordinateCondition[2]);
+          const y1 = Number(coordinateCondition[3]);
+          const x2 = Number(coordinateCondition[4]);
+          const y2 = Number(coordinateCondition[5]);
+          const minX = Math.min(x1, x2);
+          const maxX = Math.max(x1, x2);
+          const minY = Math.min(y1, y2);
+          const maxY = Math.max(y1, y2);
+          const mapX = unit.x + 1;
+          const mapY = unit.y + 1;
+          conditionMet = mapX >= minX && mapX <= maxX && mapY >= minY && mapY <= maxY;
+        } else {
+          conditionMet = false;
+        }
+      } else {
+        conditionMet = units.some((unit) => unit.id === normalizeUnitId(aliveCondition[1]));
+      }
+      const chosen = conditionMet ? thenBlock : elseBlock;
       if (chosen) selectedLines.push(...selectBattleIfBranches(chosen.lines));
       index = (elseBlock ?? thenBlock).endIndex;
     }
     return selectedLines;
+  }
+
+  async function playBattleEndCommands(lines) {
+    const selectedLines = selectBattleIfBranches(lines);
+    let pendingMessageLines = [];
+    let reachedEpilogue = false;
+    const flushMessages = async () => {
+      const messages = parseBattleMessageRecords(pendingMessageLines);
+      pendingMessageLines = [];
+      if (messages.length) await playBattleMessages(messages);
+    };
+
+    for (const rawLine of selectedLines) {
+      const line = normalizeBattleLine(rawLine);
+      const reinforcement = line.match(/^援軍配置\s+(NPC\d+)\s*:\s*\((\d+)\s*,\s*(\d+)\)$/i);
+      const cursorCommand = line.match(/^カーソル\s*\((\d+)\s*,\s*(\d+)\)$/);
+      const gotoEpilogue = new RegExp(`^GOTO\\s*:\\s*EVENT_${STAGE_ID}\\s+EP$`, 'i').test(line);
+      if (!reinforcement && !cursorCommand && line !== 'ステージクリア' && !gotoEpilogue) {
+        pendingMessageLines.push(rawLine);
+        continue;
+      }
+
+      await flushMessages();
+      if (line === 'ステージクリア') {
+        finishGame('ステージクリア');
+        await new Promise((resolve) => { battleEndContinueResolve = resolve; });
+        clearTransitioning = true;
+        gameResult.classList.add('fade-out');
+        await wait(700);
+        gameResult.hidden = true;
+        gameResult.classList.remove('fade-out', 'show-next');
+        clearPromptReady = false;
+        isGameOver = false;
+        clearTransitioning = false;
+      } else if (gotoEpilogue) {
+        clearTransitioning = true;
+        isGameOver = true;
+        gameShell.hidden = true;
+        introEvent.hidden = false;
+        await playClearStory();
+        reachedEpilogue = true;
+        break;
+      } else if (reinforcement) {
+        await deployBattleNpc(reinforcement[1], Number(reinforcement[2]), Number(reinforcement[3]));
+      } else {
+        cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, Number(cursorCommand[1]) - 1));
+        cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, Number(cursorCommand[2]) - 1));
+        scrollToCursor();
+        await waitForCameraToStop();
+        draw();
+      }
+    }
+
+    await flushMessages();
+    return reachedEpilogue;
+  }
+
+  async function deployBattleNpc(rawId, mapX, mapY) {
+    const id = normalizeUnitId(rawId);
+    const definition = npcDefinitions.get(id);
+    if (!definition?.imageFile) throw new Error(`NPC_Paramに${id}の画像指定がありません。`);
+    const existing = units.find((unit) => unit.id === id);
+    if (existing) units.splice(units.indexOf(existing), 1);
+
+    const unit = {
+      id,
+      side: 'npc',
+      x: Math.max(0, Math.min(MAP_WIDTH - 1, mapX - 1)),
+      y: Math.max(0, Math.min(MAP_HEIGHT - 1, mapY - 1)),
+      hp: 1,
+      maxHp: 1,
+      moveRange: 0,
+      moveRemaining: 0,
+      minAttackRange: 1,
+      attackRange: 0,
+      attackPower: 0,
+      evasion: 0,
+      hitBonus: 0,
+      moveUsed: true,
+      attackUsed: true,
+      ended: true,
+      imageFile: definition.imageFile,
+      spriteWidth: TILE_SIZE,
+      spriteHeight: TILE_SIZE,
+      image: new Image(),
+    };
+    unit.image.src = `Unit/${unit.imageFile}`;
+    await waitForImage(unit.image);
+    units.push(unit);
+    draw();
   }
 
   async function runBattleAttackEvent(attacker, target) {
@@ -1534,6 +1680,14 @@
     await playBattleMessages(event.messages);
   }
 
+  async function runBattleObjectDefeatEvent() {
+    const event = battleObjectDefeatEvent;
+    if (!event || completedBattleEvents.has(event.name)) return false;
+    completedBattleEvents.add(event.name);
+    await playBattleMessages(event.messages);
+    return true;
+  }
+
   async function resolveBattleEndEvent() {
     const playersRemaining = units.some((unit) => unit.side === 'player');
     const enemiesRemaining = units.some((unit) => unit.side === 'enemy');
@@ -1549,11 +1703,9 @@
 
     if (!enemiesRemaining) {
       const clearBlock = battleEndEvent && findBattleConditionBlock(battleEndEvent.lines, 'ALL EN');
-      const clearLines = clearBlock ? selectBattleIfBranches(clearBlock.lines) : [];
-      const messages = parseBattleMessageRecords(clearLines);
-      if (messages.length) await playBattleMessages(messages);
       eventFlags.add(STAGE_CLEAR_FLAG);
-      finishGame('ステージクリア');
+      const reachedEpilogue = clearBlock ? await playBattleEndCommands(clearBlock.lines) : false;
+      if (!reachedEpilogue) finishGame('ステージクリア');
     }
   }
 
@@ -1833,8 +1985,26 @@
     return loadouts;
   }
 
+  function parseNpcDefinitions(source) {
+    const definitions = new Map();
+    let currentId = null;
+    for (const rawLine of tryExtractEventBlock(source, 'NPC_Param')) {
+      const line = rawLine.replace(/\/\/.*$/, '').normalize('NFKC').trim();
+      const idMatch = line.match(/^(NPC\d+)$/i);
+      if (idMatch) {
+        currentId = normalizeUnitId(idMatch[1]);
+        definitions.set(currentId, {});
+        continue;
+      }
+      if (!currentId) continue;
+      const imageMatch = line.match(/^([\w.-]+\.png)$/i);
+      if (imageMatch) definitions.get(currentId).imageFile = imageMatch[1];
+    }
+    return definitions;
+  }
+
   function normalizeUnitId(id) {
-    const match = id.match(/^(PC|EN)0*(\d+)$/i);
+    const match = id.match(/^(PC|EN|NPC)0*(\d+)$/i);
     return match ? `${match[1].toUpperCase()}${match[2].padStart(2, '0')}` : id.toUpperCase();
   }
 
@@ -2393,7 +2563,8 @@
         if (obstacle.hp <= 0) {
           obstacles.splice(obstacles.indexOf(obstacle), 1);
           await Promise.all([startExplosion(obstacle), playSe('BreakObj.mp3')]);
-          showAttackMessage('障害物が破壊された！', 1800);
+          const eventPlayed = await runBattleObjectDefeatEvent();
+          if (!eventPlayed) showAttackMessage('障害物が破壊された！', 1800);
         }
       } else {
         showAttackMessage(`${attacker.id} → ${obstacle.id}：回避！`);
@@ -3249,7 +3420,7 @@
           unitY + spriteHeight / TILE_SIZE > camera.y && unitY < camera.y + VIEW_HEIGHT) {
         ctx.drawImage(unit.image, screenX, screenY, spriteWidth, spriteHeight);
       }
-      if (!isUnitMoving && (!isCombatResolving || unit.hpDisplayOverride !== undefined) &&
+      if (unit.side !== 'npc' && !isUnitMoving && (!isCombatResolving || unit.hpDisplayOverride !== undefined) &&
           unitX + spriteWidth / TILE_SIZE > camera.x && unitX < camera.x + VIEW_WIDTH &&
           unitY + spriteHeight / TILE_SIZE > camera.y && unitY < camera.y + VIEW_HEIGHT) {
         const hpBadgeX = screenX + spriteWidth / 2 - 16;
@@ -3339,7 +3510,7 @@
       if (y >= 0 && y < MAP_HEIGHT && y % 2 === 0) ctx.fillText(String(y + 1), 5, screenY + TILE_SIZE / 2);
     }
 
-    const cursorUnit = combatTarget ?? getUnitAtPosition(cursor.x, cursor.y);
+    const cursorUnit = getUnitAtPosition(cursor.x, cursor.y);
     const cursorFootprint = cursorUnit ? getFootprintSize(cursorUnit) : { width: 1, height: 1 };
     const cursorMapX = cursorUnit?.x ?? cursor.x;
     const cursorMapY = cursorUnit?.y ?? cursor.y;
