@@ -52,6 +52,12 @@
   const turnConfirm = document.querySelector('#turn-confirm');
   const audioStartScreen = document.querySelector('#audio-start-screen');
   const titleScreen = document.querySelector('#title-screen');
+  const stageDebugMenu = document.querySelector('#stage-debug-menu');
+  const stageDebugStatus = document.querySelector('#stage-debug-status');
+  const stageDebugButtons = [...stageDebugMenu.querySelectorAll('[data-stage-id]')];
+  const stagePreviewBanner = document.querySelector('#stage-preview-banner');
+  const stagePreviewLabel = document.querySelector('#stage-preview-label');
+  const stagePreviewExit = document.querySelector('#stage-preview-exit');
   const introEvent = document.querySelector('#intro-event');
   const introEventImage = introEvent.querySelector('img');
   const introImageSource = introEventImage.getAttribute('src');
@@ -75,6 +81,10 @@
   let titleTransitioning = false;
   let titleOpening = false;
   let titleIntroComplete = false;
+  let stageDebugSelection = 0;
+  let stagePreviewMode = false;
+  let stagePreviewPreviousStageId = STAGE_ID;
+  let stagePreviewPreviousRoster = [];
   let clearPromptReady = false;
   let battleEndContinueResolve = null;
   let clearTransitioning = false;
@@ -145,7 +155,7 @@
   }
 
   function toggleDebugMode() {
-    if (gameShell.hidden || isGameOver || battleEventActive) return;
+    if (gameShell.hidden || stagePreviewMode || isGameOver || battleEventActive) return;
     debugMode = !debugMode;
     debugPanel.hidden = !debugMode;
     if (debugMode) {
@@ -178,7 +188,11 @@
   window.addEventListener('keydown', (event) => {
     if (event.ctrlKey && event.key.toLowerCase() === 'q') {
       event.preventDefault();
-      toggleDebugMode();
+      if (!titleScreen.hidden) {
+        if (titleIntroComplete && !titleOpening && !titleTransitioning) toggleStageDebugMenu();
+      } else if (!stagePreviewMode) {
+        toggleDebugMode();
+      }
     }
   });
 
@@ -308,6 +322,7 @@
   const hitEffectImages = new Map();
   const hitEffects = [];
   let unitBaseParameters = new Map();
+  let npcBaseParameters = new Map();
   let weaponParameters = new Map();
   let armorParameters = new Map();
   let itemParameters = new Map();
@@ -395,6 +410,16 @@
     if (lastGestureDragged) {
       lastGestureDragged = false;
       event.preventDefault();
+      return;
+    }
+    if (stagePreviewMode) {
+      canvas.focus();
+      const bounds = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / bounds.width;
+      const scaleY = canvas.height / bounds.height;
+      cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, Math.floor(camera.x + ((event.clientX - bounds.left) * scaleX) / TILE_SIZE)));
+      cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, Math.floor(camera.y + ((event.clientY - bounds.top) * scaleY) / TILE_SIZE)));
+      scrollToCursor();
       return;
     }
     if (battleEventActive || isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden || !saveSlotDialog.hidden || !attackChoiceCommand.hidden || !itemChoiceCommand.hidden || !itemConfirmCommand.hidden || !precisionConfirmCommand.hidden || !hateConfirmCommand.hidden) return;
@@ -1065,6 +1090,16 @@
     else if (button.dataset.titleAction === 'load') openTitleLoadList();
   });
 
+  stageDebugMenu.addEventListener('click', (event) => {
+    const stageButton = event.target.closest('[data-stage-id]');
+    if (stageButton) {
+      openStagePreview(stageButton.dataset.stageId);
+      return;
+    }
+    if (event.target.closest('[data-stage-debug-close]')) toggleStageDebugMenu(false);
+  });
+  stagePreviewExit.addEventListener('click', exitStagePreview);
+
   gameResult.addEventListener('click', (event) => {
     const option = event.target.closest('[data-game-over-action]');
     if (option && gameOverOptionsReady && !clearTransitioning) {
@@ -1118,6 +1153,20 @@
       event.preventDefault();
       return;
     }
+    if (!stageDebugMenu.hidden) {
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        stageDebugSelection = (stageDebugSelection + (event.key === 'ArrowDown' ? 1 : -1) + stageDebugButtons.length) % stageDebugButtons.length;
+        updateStageDebugSelection();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        toggleStageDebugMenu(false);
+      } else if (event.key === 'Enter' || event.key === ' ' || event.key.toLowerCase() === 'x') {
+        event.preventDefault();
+        stageDebugButtons[stageDebugSelection]?.click();
+      }
+      return;
+    }
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       event.preventDefault();
       titleSelection = 1 - titleSelection;
@@ -1136,6 +1185,95 @@
       button.classList.toggle('selected', index === titleSelection);
       button.setAttribute('aria-current', index === titleSelection ? 'true' : 'false');
     });
+  }
+
+  function updateStageDebugSelection() {
+    stageDebugButtons.forEach((button, index) => {
+      button.classList.toggle('selected', index === stageDebugSelection);
+      button.setAttribute('aria-current', index === stageDebugSelection ? 'true' : 'false');
+    });
+  }
+
+  function toggleStageDebugMenu(forceOpen = stageDebugMenu.hidden) {
+    const open = Boolean(forceOpen);
+    stageDebugMenu.hidden = !open;
+    stageDebugStatus.textContent = '';
+    if (open) {
+      stageDebugSelection = 0;
+      updateStageDebugSelection();
+      stageDebugButtons[0]?.focus();
+    } else {
+      titleOptions[titleSelection]?.focus();
+    }
+  }
+
+  async function openStagePreview(stageId) {
+    if (titleTransitioning) return;
+    titleTransitioning = true;
+    stageDebugMenu.hidden = true;
+    stagePreviewPreviousStageId = currentStageId;
+    stagePreviewPreviousRoster = playerRoster.map((unit) => ({ ...unit }));
+    titleScreen.classList.add('fade-out');
+    fadeOutBgm();
+    await wait(700);
+    titleScreen.hidden = true;
+    introEvent.hidden = true;
+    stagePreviewMode = true;
+    currentStageId = String(stageId).padStart(3, '0');
+    playerRoster = [];
+    stagePreviewBanner.hidden = false;
+    stagePreviewLabel.textContent = `マップ配置確認：Battle_${currentStageId}`;
+    try {
+      resetStageState();
+      const battleScript = await loadEventScript(`Event/Battle_${currentStageId}.txt`);
+      await applyBattleSetup(battleScript);
+      prepareBattleEventData(battleScript);
+      currentSide = 'player';
+      sideTurnCounts.player = 1;
+      sideTurnCounts.enemy = 1;
+      unitCommand.hidden = true;
+      attackChoiceCommand.hidden = true;
+      itemChoiceCommand.hidden = true;
+      itemConfirmCommand.hidden = true;
+      precisionConfirmCommand.hidden = true;
+      hateConfirmCommand.hidden = true;
+      moveConfirmCommand.hidden = true;
+      unitStatus.hidden = true;
+      emptyCommand.hidden = true;
+      updatePhaseLabel();
+      const maxCameraX = Math.max(0, MAP_WIDTH - VIEW_WIDTH);
+      const maxCameraY = Math.max(0, MAP_HEIGHT - VIEW_HEIGHT);
+      camera.x = Math.max(0, Math.min(maxCameraX, startCursor.x - Math.floor(VIEW_WIDTH / 2)));
+      camera.y = Math.max(0, Math.min(maxCameraY, startCursor.y - Math.floor(VIEW_HEIGHT / 2)));
+      cameraTarget.x = camera.x;
+      cameraTarget.y = camera.y;
+      gameShell.hidden = false;
+      draw();
+      canvas.focus();
+    } catch (error) {
+      console.error(`Battle_${currentStageId}.txt のプレビューを読み込めませんでした。`, error);
+      stagePreviewMode = false;
+      stagePreviewBanner.hidden = true;
+      gameShell.hidden = true;
+      titleScreen.hidden = false;
+      titleScreen.classList.remove('fade-out');
+      stageDebugMenu.hidden = false;
+      stageDebugStatus.textContent = `読み込み失敗：${error.message || error}`;
+      playerRoster = stagePreviewPreviousRoster;
+      currentStageId = stagePreviewPreviousStageId;
+      setBgm('M001_Title.mp3');
+    }
+    titleTransitioning = false;
+  }
+
+  function exitStagePreview() {
+    if (!stagePreviewMode) return;
+    stagePreviewMode = false;
+    stagePreviewBanner.hidden = true;
+    gameShell.hidden = true;
+    playerRoster = stagePreviewPreviousRoster;
+    currentStageId = stagePreviewPreviousStageId;
+    showTitleMenu();
   }
 
   async function startNewGame() {
@@ -1888,33 +2026,41 @@
     if (!definition?.imageFile) throw new Error(`NPC_Paramに${id}の画像指定がありません。`);
     const existing = units.find((unit) => unit.id === id);
     if (existing) units.splice(units.indexOf(existing), 1);
-
-    const unit = {
-      id,
-      side: 'npc',
-      x: Math.max(0, Math.min(MAP_WIDTH - 1, mapX - 1)),
-      y: Math.max(0, Math.min(MAP_HEIGHT - 1, mapY - 1)),
-      hp: 1,
-      maxHp: 1,
-      moveRange: 0,
-      moveRemaining: 0,
-      minAttackRange: 1,
-      attackRange: 0,
-      attackPower: 0,
-      evasion: 0,
-      hitBonus: 0,
-      moveUsed: true,
-      attackUsed: true,
-      ended: true,
-      imageFile: definition.imageFile,
-      spriteWidth: TILE_SIZE,
-      spriteHeight: TILE_SIZE,
-      image: new Image(),
-    };
+    const unit = createBattleNpc(id, mapX - 1, mapY - 1, definition);
     unit.image.src = `Unit/${unit.imageFile}`;
     await waitForImage(unit.image);
     units.push(unit);
     draw();
+  }
+
+  function createBattleNpc(id, x, y, definition) {
+    const parameters = npcBaseParameters.get(definition.unitTypeId) ?? {};
+    const size = parameters.size ?? 1;
+    const widthInTiles = size === 2 || size === 4 ? 2 : 1;
+    const heightInTiles = size === 4 ? 2 : 1;
+    return {
+      id,
+      side: 'npc',
+      x: Math.max(0, Math.min(MAP_WIDTH - widthInTiles, x)),
+      y: Math.max(0, Math.min(MAP_HEIGHT - heightInTiles, y)),
+      hp: parameters.hp ?? 1,
+      maxHp: parameters.hp ?? 1,
+      moveRange: parameters.moveRange ?? 0,
+      moveRemaining: 0,
+      minAttackRange: 1,
+      attackRange: 0,
+      attackPower: 0,
+      evasion: parameters.evasion ?? 0,
+      hitBonus: parameters.hitBonus ?? 0,
+      moveUsed: true,
+      attackUsed: true,
+      ended: true,
+      unitTypeId: definition.unitTypeId ?? '',
+      imageFile: definition.imageFile,
+      spriteWidth: widthInTiles * TILE_SIZE,
+      spriteHeight: heightInTiles * TILE_SIZE,
+      image: new Image(),
+    };
   }
 
   async function runBattleAttackEvent(attacker, target) {
@@ -1965,6 +2111,7 @@
   async function applyBattleSetup(source) {
     const parameterTable = parseParameterTable(await loadEventScript('Data/Param_table.txt'));
     unitBaseParameters = parameterTable.units;
+    npcBaseParameters = parameterTable.npcs;
     weaponParameters = parameterTable.weapons;
     armorParameters = parameterTable.armors;
     itemParameters = parameterTable.items;
@@ -1981,12 +2128,15 @@
       ...loadout,
     });
     const stageEnemyLoadouts = parseUnitLoadouts(source, 'EN_Param');
+    validateUnitLoadouts(carriedPlayerLoadouts, 'ADD_Param');
+    validateUnitLoadouts(stageEnemyLoadouts, 'EN_Param');
     const unitLoadouts = new Map([
       ...carriedPlayerLoadouts,
       ...stageEnemyLoadouts,
     ]);
     phaseBgmFiles = parsePhaseBgm(source);
     const setupLines = extractEventBlock(source, '初期配置');
+    npcDefinitions = parseNpcDefinitions(source);
     const mapLine = setupLines.map((line) => line.normalize('NFKC').trim()).find((line) => /^MAP\s*:/i.test(line));
     const mapConfig = mapLine?.match(/^MAP\s*:\s*(\S+)\s+(\d+)\s*\*\s*(\d+)$/i);
     if (!mapConfig) throw new Error('初期配置に「MAP:画像名 横*縦」を指定してください。');
@@ -2030,6 +2180,12 @@
     }
     const coordinatePattern = /^\s*(PC\d+|EN\d+|OBJ\d+)\s*:\s*(.+?)(?:\s*:\s*(type_[\w-]+))?\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*(?::\s*HP\s*(\d+)|\s+HP\s*(\d+))?\s*$/i;
     units.splice(0, units.length, ...unitTemplates.map((unit) => ({ ...unit, image: new Image() })));
+    const playerTemplate = unitTemplates.find((unit) => unit.side === 'player');
+    if (stagePlayerLoadouts.size && !playerTemplate) throw new Error('プレイヤーユニットの初期テンプレートがありません。');
+    for (const id of stagePlayerLoadouts.keys()) {
+      if (units.some((unit) => unit.id === id)) continue;
+      units.push({ ...playerTemplate, id, image: new Image() });
+    }
     const enemyTemplate = unitTemplates.find((unit) => unit.side === 'enemy');
     if (stageEnemyLoadouts.size && !enemyTemplate) throw new Error('敵ユニットの初期テンプレートがありません。');
     for (const id of stageEnemyLoadouts.keys()) {
@@ -2101,15 +2257,22 @@
 
     const placementLines = tryExtractEventBlock(source, '\u914d\u7f6e');
     for (const line of placementLines) {
-      const match = line.normalize('NFKC').match(/^\s*(PC\d+|EN\d+)\s*:\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*$/i);
+      const match = line.normalize('NFKC').match(/^\s*(PC\d+|EN\d+|NPC\d+)\s*:\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*$/i);
       if (!match) continue;
       const [, rawId, x, y] = match;
-      const id = rawId.toUpperCase();
+      const id = normalizeUnitId(rawId);
+      if (id.startsWith('NPC')) {
+        const definition = npcDefinitions.get(id);
+        if (!definition?.imageFile) throw new Error(`NPC_Paramに${id}の画像指定がありません。`);
+        units.push(createBattleNpc(id, Number(x) - 1, Number(y) - 1, definition));
+        configuredUnitIds.add(id);
+        continue;
+      }
       const unit = units.find((candidate) => candidate.id === id);
       const loadout = unitLoadouts.get(id);
-      if (!unit || !loadout?.imageFile) continue;
+      if (!unit || (!loadout?.imageFile && !stagePreviewMode)) continue;
       configuredUnitIds.add(id);
-      configureUnit(unit, id, { x: Number(x) - 1, y: Number(y) - 1 });
+      configureUnit(unit, id, { x: Number(x) - 1, y: Number(y) - 1 }, loadout?.imageFile ?? `${id}s.png`);
     }
 
     units.splice(0, units.length, ...units.filter((unit) => configuredUnitIds.has(unit.id)));
@@ -2131,6 +2294,9 @@
       delete record.ended;
       delete record.hateTargetId;
       updatedPlayerRoster.set(normalizeUnitId(unit.id), record);
+    }
+    for (const [id, loadout] of stagePlayerLoadouts) {
+      updatedPlayerRoster.set(id, { ...updatedPlayerRoster.get(id), id, side: 'player', ...loadout });
     }
     playerRoster = [...updatedPlayerRoster.values()];
     await Promise.all([...units, ...obstacles].map((entity) => waitForImage(entity.image)));
@@ -2180,6 +2346,7 @@
 
   function parseParameterTable(source) {
     const units = new Map();
+    const npcs = new Map();
     const weapons = new Map();
     const armors = new Map();
     const items = new Map();
@@ -2200,31 +2367,33 @@
       const line = rawLine.replace(/\/\/.*$/, '').normalize('NFKC').trim();
       if (!line) continue;
 
-      if (['PC', 'EN', '\u30a6\u30a7\u30dd\u30f3', '\u30a2\u30fc\u30de\u30fc', '\u7279\u6b8a\u88c5\u5099'].includes(line)) {
+      if (['PC', 'EN', 'NPC', '\u30a6\u30a7\u30dd\u30f3', '\u30a2\u30fc\u30de\u30fc', '\u7279\u6b8a\u88c5\u5099'].includes(line)) {
         section = line;
         currentType = null;
         currentFields = null;
         continue;
       }
 
-      const typeMatch = line.match(/^(Type_(PC|EN|WEP|ARM|ITEM)_\d+)$/i);
+      const typeMatch = line.match(/^(Type_(PC|EN|NPC|WEP|ARM|ITEM)_[\w-]+)$/i);
       if (typeMatch) {
-        const [, typeId, kind] = typeMatch;
+        const [, typeId] = typeMatch;
+        const kind = typeId.match(/^Type_([A-Z]+)/i)?.[1]?.toUpperCase() ?? '';
         const isUnitType = (section === 'PC' && kind.toUpperCase() === 'PC') ||
           (section === 'EN' && kind.toUpperCase() === 'EN');
+        const isNpcType = section === 'NPC' && kind === 'NPC';
         const isWeaponType = section === '\u30a6\u30a7\u30dd\u30f3' && kind.toUpperCase() === 'WEP';
         const isArmorType = section === '\u30a2\u30fc\u30de\u30fc' && kind.toUpperCase() === 'ARM';
         const isItemType = section === '特殊装備' && kind.toUpperCase() === 'ITEM';
-        if (!isUnitType && !isWeaponType && !isArmorType && !isItemType) {
+        if (!isUnitType && !isNpcType && !isWeaponType && !isArmorType && !isItemType) {
           currentType = null;
           currentFields = null;
           continue;
         }
-        const table = isUnitType ? units : isWeaponType ? weapons : isArmorType ? armors : items;
+        const table = isUnitType ? units : isNpcType ? npcs : isWeaponType ? weapons : isArmorType ? armors : items;
         if (table.has(typeId)) throw new Error(`Param_table.txt のタイプIDが重複しています: ${typeId}`);
         currentType = {};
         table.set(typeId, currentType);
-        currentFields = isUnitType ? unitFields : isWeaponType ? weaponFields : isArmorType ? armorFields : itemFields;
+        currentFields = isUnitType || isNpcType ? unitFields : isWeaponType ? weaponFields : isArmorType ? armorFields : itemFields;
         continue;
       }
 
@@ -2271,7 +2440,7 @@
       const hpEffect = parameters.effect?.match(/^HP\s*\+\s*(\d+)$/i);
       if (hpEffect) parameters.hpRestore = Number(hpEffect[1]);
     }
-    return { units, weapons, armors, items };
+    return { units, npcs, weapons, armors, items };
   }
 
   function tryExtractEventBlock(source, blockName) {
@@ -2283,26 +2452,76 @@
   function parseUnitLoadouts(source, blockName) {
     const loadouts = new Map();
     let current = null;
+    let currentId = '';
     for (const rawLine of tryExtractEventBlock(source, blockName)) {
       const line = rawLine.replace(/\/\/.*$/, '').normalize('NFKC').trim();
+      if (!line || line === '{' || line === '}') continue;
       const unitMatch = line.match(/^(PC\d+|EN\d+)$/i);
       if (unitMatch) {
+        currentId = normalizeUnitId(unitMatch[1]);
+        const expectedPrefix = blockName === 'ADD_Param' ? 'PC' : 'EN';
+        if (!currentId.startsWith(expectedPrefix)) {
+          throw new Error(`${blockName}: ${currentId} はこのブロックに書けません（${expectedPrefix}ユニットを指定してください）。`);
+        }
+        if (loadouts.has(currentId)) throw new Error(`${blockName}: ${currentId} が重複しています。`);
         current = {};
-        loadouts.set(normalizeUnitId(unitMatch[1]), current);
+        loadouts.set(currentId, current);
         continue;
       }
-      if (!current) continue;
-      if (/^[\w.-]+\.png$/i.test(line) && !current.imageFile) current.imageFile = line;
+      if (!current) throw new Error(`${blockName}: ユニットIDより前に不明な記述があります: ${line}`);
+      if (/^[\w.-]+\.png$/i.test(line)) {
+        if (current.imageFile) throw new Error(`${blockName}: ${currentId} に画像が複数指定されています。`);
+        current.imageFile = line;
+        continue;
+      }
       const unitTypeMatch = line.match(/^(Type_(?:PC|EN)_\d+)$/i);
-      if (unitTypeMatch) current.unitTypeId = unitTypeMatch[1];
+      if (unitTypeMatch) {
+        if (current.unitTypeId) throw new Error(`${blockName}: ${currentId} に基本パラメータが複数指定されています。`);
+        current.unitTypeId = unitTypeMatch[1];
+        continue;
+      }
       const weaponMatch = line.match(/^(Type_WEP_\d+)$/i);
-      if (weaponMatch) current.weaponTypeId = weaponMatch[1];
+      if (weaponMatch) {
+        if (current.weaponTypeId) throw new Error(`${blockName}: ${currentId} に武器が複数指定されています。`);
+        current.weaponTypeId = weaponMatch[1];
+        continue;
+      }
       const armorMatch = line.match(/^(Type_ARM_\d+)$/i);
-      if (armorMatch) current.armorTypeId = armorMatch[1];
+      if (armorMatch) {
+        if (current.armorTypeId) throw new Error(`${blockName}: ${currentId} にアーマーが複数指定されています。`);
+        current.armorTypeId = armorMatch[1];
+        continue;
+      }
       const itemMatch = line.match(/^(Type_ITEM_\d+)$/i);
-      if (itemMatch) current.itemTypeId = itemMatch[1];
+      if (itemMatch) {
+        if (current.itemTypeId) throw new Error(`${blockName}: ${currentId} に特殊装備が複数指定されています。`);
+        current.itemTypeId = itemMatch[1];
+        continue;
+      }
+      throw new Error(`${blockName}: ${currentId} の記述を解析できません: ${line}`);
     }
     return loadouts;
+  }
+
+  function validateUnitLoadouts(loadouts, blockName) {
+    for (const [id, loadout] of loadouts) {
+      const faction = id.startsWith('PC') ? 'PC' : 'EN';
+      if (!loadout.imageFile) throw new Error(`${blockName}: ${id} に画像ファイル（例: ${id}s.png）がありません。`);
+      if (!loadout.unitTypeId) throw new Error(`${blockName}: ${id} に基本パラメータ Type_${faction}_*** がありません。`);
+      if (!unitBaseParameters.has(loadout.unitTypeId)) {
+        throw new Error(`${blockName}: ${id} が参照する ${loadout.unitTypeId} は Data/Param_table.txt にありません。`);
+      }
+      if (!loadout.weaponTypeId) throw new Error(`${blockName}: ${id} に武器パラメータ Type_WEP_*** がありません。`);
+      if (!weaponParameters.has(loadout.weaponTypeId)) {
+        throw new Error(`${blockName}: ${id} が参照する ${loadout.weaponTypeId} は Data/Param_table.txt にありません。`);
+      }
+      if (loadout.armorTypeId && !armorParameters.has(loadout.armorTypeId)) {
+        throw new Error(`${blockName}: ${id} が参照する ${loadout.armorTypeId} は Data/Param_table.txt にありません。`);
+      }
+      if (loadout.itemTypeId && !itemParameters.has(loadout.itemTypeId)) {
+        throw new Error(`${blockName}: ${id} が参照する ${loadout.itemTypeId} は Data/Param_table.txt にありません。`);
+      }
+    }
   }
 
   function parseNpcDefinitions(source) {
@@ -2319,6 +2538,8 @@
       if (!currentId) continue;
       const imageMatch = line.match(/^([\w.-]+\.png)$/i);
       if (imageMatch) definitions.get(currentId).imageFile = imageMatch[1];
+      const unitTypeMatch = line.match(/^(Type_NPC_[\w-]+)$/i);
+      if (unitTypeMatch) definitions.get(currentId).unitTypeId = unitTypeMatch[1];
     }
     return definitions;
   }
@@ -2984,6 +3205,7 @@
   }
 
   function activateCurrentTile() {
+    if (stagePreviewMode) return;
     if (!saveSlotDialog.hidden) {
       saveSlotDialog.querySelector('[data-action="close-save-slots"]').click();
       return;
@@ -3638,6 +3860,12 @@
   }
 
   function updateCursorEnemyPreview(unit) {
+    if (stagePreviewMode) {
+      cursorEnemyPreview = null;
+      if (cursorEnemyPreviewFrame) cancelAnimationFrame(cursorEnemyPreviewFrame);
+      cursorEnemyPreviewFrame = 0;
+      return;
+    }
     const nextId = unit?.side === 'enemy' ? unit.id : null;
     if (cursorEnemyPreview?.unitId === nextId) return;
     if (!nextId) {
@@ -3871,7 +4099,7 @@
   }
 
   function draw() {
-    const showPassability = !emptyCommand.hidden;
+    const showPassability = stagePreviewMode || !emptyCommand.hidden;
     passabilityLegend.hidden = !showPassability;
     const canShowCursorEnemyPreview = cursorEnemyPreview && !rangeMode &&
       unitCommand.hidden && attackChoiceCommand.hidden && precisionConfirmCommand.hidden &&

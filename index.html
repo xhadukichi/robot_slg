@@ -18,6 +18,17 @@
           <button type="button" data-title-action="load" role="menuitem">Ｌｏａｄ　Ｇａｍｅ</button>
         </div>
       </div>
+      <section id="stage-debug-menu" class="stage-debug-menu" role="dialog" aria-modal="true" aria-labelledby="stage-debug-title" hidden>
+        <h2 id="stage-debug-title">ステージ選択</h2>
+        <p>マップ配置を確認するステージを選択</p>
+        <div class="stage-debug-options">
+          <button type="button" data-stage-id="000">Battle_000</button>
+          <button type="button" data-stage-id="001">Battle_001</button>
+          <button type="button" data-stage-id="002">Battle_002</button>
+        </div>
+        <p id="stage-debug-status" aria-live="polite"></p>
+        <button type="button" data-stage-debug-close>閉じる（Ctrl+Q）</button>
+      </section>
     </section>
     <section id="intro-event" class="intro-event" aria-label="ステージ前イベント" hidden>
       <img src="Unit/Event_01.png" alt="イベント挿絵" />
@@ -36,6 +47,11 @@
         </div>
         <p class="help">クリック / Space・Enter・X：決定　Esc・Z：キャンセル</p>
       </header>
+      <div id="stage-preview-banner" class="stage-preview-banner" hidden>
+        <strong id="stage-preview-label">マップ配置確認</strong>
+        <span>プレビュー中はユニットを操作できません。</span>
+        <button id="stage-preview-exit" type="button">タイトルへ戻る</button>
+      </div>
       <section class="map-frame" aria-label="横20マス、縦16マスのマップ">
         <canvas id="map" width="1024" height="768" tabindex="0" aria-label="マップ。矢印キーまたはWASDでカーソルを移動できます"></canvas>
         <div id="passability-legend" class="passability-legend" hidden>

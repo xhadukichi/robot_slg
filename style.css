@@ -75,6 +75,42 @@ body {
   transition: opacity 600ms ease;
 }
 .title-screen.menu-visible .title-menu { opacity: 1; pointer-events: auto; }
+.stage-debug-menu {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  width: min(420px, calc(100vw - 32px));
+  padding: 24px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #b6aa78;
+  border-radius: 6px;
+  background: rgba(13, 20, 17, .96);
+  box-shadow: 0 12px 40px #000c;
+  color: #f1ead7;
+  text-align: center;
+}
+.stage-debug-menu[hidden] { display: none; }
+.stage-debug-menu h2 { margin: 0 0 8px; color: #f1d978; }
+.stage-debug-menu p { margin: 0 0 16px; color: #b8c3b9; font-size: 13px; }
+.stage-debug-options { display: grid; gap: 8px; margin-bottom: 14px; }
+.stage-debug-menu button, .stage-preview-banner button {
+  min-height: 40px;
+  border: 1px solid #637261;
+  border-radius: 4px;
+  background: #202b22;
+  color: #f1ead7;
+  font: 600 15px "Yu Gothic UI", Meiryo, sans-serif;
+  cursor: pointer;
+}
+.stage-debug-menu button:hover, .stage-debug-menu button:focus-visible,
+.stage-debug-menu button.selected, .stage-preview-banner button:hover {
+  border-color: #f1d978;
+  color: #f1d978;
+  outline: 2px solid #f1d978;
+  outline-offset: 2px;
+}
+.stage-debug-menu #stage-debug-status { min-height: 1.4em; margin: 8px 0; color: #ffb7a8; }
 .intro-event {
   position: fixed;
   z-index: 25;
@@ -206,6 +242,22 @@ body {
 }
 
 .game-header { margin-bottom: 16px; }
+.stage-preview-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #817746;
+  border-radius: 4px;
+  background: #24291e;
+  color: #d8dfd6;
+  font-size: 13px;
+}
+.stage-preview-banner[hidden] { display: none; }
+.stage-preview-banner strong { color: #f1d978; }
+.stage-preview-banner span { flex: 1; }
+.stage-preview-banner button { min-height: 34px; padding: 4px 12px; font-size: 13px; }
 .eyebrow {
   margin: 0 0 5px;
   color: #91aa98;
