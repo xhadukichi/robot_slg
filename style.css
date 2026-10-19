@@ -75,6 +75,7 @@ body {
   transition: opacity 600ms ease;
 }
 .title-screen.menu-visible .title-menu { opacity: 1; pointer-events: auto; }
+.title-screen.title-load-open .title-menu { pointer-events: none; }
 .stage-debug-menu {
   position: absolute;
   z-index: 2;
@@ -372,6 +373,10 @@ h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
   background: #1a241eef;
   color: #f2e9d6;
   box-shadow: 0 10px 36px #000b;
+}
+.save-slot-dialog.floating-save-dialog {
+  position: fixed;
+  z-index: 31;
 }
 .save-slot-dialog[hidden] { display: none; }
 .save-slot-dialog h2 { margin: 0 0 12px; font-size: 17px; }
