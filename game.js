@@ -2855,6 +2855,7 @@
         stageNo: currentStageId,
         eventPosition: saveListReturnToStory ? 'story' : 'player-input',
         storySection: saveListReturnToStory ? currentStorySection : '',
+        storyGoto: saveListReturnToStory ? currentEventGoto : '',
         units: units.map(serializeEntity),
         obstacles: obstacles.map(serializeEntity),
         impassableTiles: [...impassableTiles],
@@ -2982,7 +2983,14 @@
       canvas.focus();
       if (resumeStory) {
         isClearStory = true;
-        await playClearStory(stageId, snapshot.battle.storySection || 'EP');
+        let resumeGoto = snapshot.battle.storyGoto || '';
+        const storySection = snapshot.battle.storySection || 'EP';
+        if (!resumeGoto) {
+          const eventScript = await loadEventScript(`Event/Event_${stageId}.txt`);
+          resumeGoto = parseEventSection(eventScript, storySection).goto || '';
+        }
+        if (resumeGoto) await followEventGoto(resumeGoto);
+        else await playClearStory(stageId, storySection);
       } else {
         isClearStory = false;
         await restoreBgm(snapshot.battle.bgm);
