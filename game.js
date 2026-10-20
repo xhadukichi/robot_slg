@@ -4213,7 +4213,7 @@
     }
   }
 
-  function isUnitPositionBlocked(unit, x, y, allowNpcTransit = false) {
+  function isUnitPositionBlocked(unit, x, y, allowFriendlyTransit = false) {
     const { width, height } = getFootprintSize(unit);
     if (x < 0 || y < 0 || x + width > MAP_WIDTH || y + height > MAP_HEIGHT) return true;
     for (let tileY = y; tileY < y + height; tileY++) {
@@ -4228,7 +4228,8 @@
     if (obstacles.some((obstacle) => overlaps(obstacle.x, obstacle.y, 1, 1))) return true;
     return units.some((other) => {
       if (other === unit) return false;
-      if (allowNpcTransit && unit.side === 'player' && other.side === 'npc') return false;
+      if (allowFriendlyTransit && unit.side === 'player' &&
+          (other.side === 'player' || other.side === 'npc')) return false;
       const otherSize = getFootprintSize(other);
       return overlaps(other.x, other.y, otherSize.width, otherSize.height);
     });
