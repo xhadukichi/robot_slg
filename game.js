@@ -3307,7 +3307,7 @@
             !(allowDestructibleObjects && obstacle.destructible))) return true;
         return units.some((other) => {
           if (other === unit) return false;
-          if (areAlliedUnits(unit, other)) return false;
+          if (canPassThroughUnit(unit, other)) return false;
           const otherSize = getFootprintSize(other);
           return overlaps(other.x, other.y, otherSize.width, otherSize.height);
         });
@@ -4235,15 +4235,17 @@
     if (obstacles.some((obstacle) => overlaps(obstacle.x, obstacle.y, 1, 1))) return true;
     return units.some((other) => {
       if (other === unit) return false;
-      if (allowFriendlyTransit && areAlliedUnits(unit, other)) return false;
+      if (allowFriendlyTransit && canPassThroughUnit(unit, other)) return false;
       const otherSize = getFootprintSize(other);
       return overlaps(other.x, other.y, otherSize.width, otherSize.height);
     });
   }
 
-  function areAlliedUnits(first, second) {
-    const alliedSides = new Set(['player', 'npc']);
-    return first.side === second.side || (alliedSides.has(first.side) && alliedSides.has(second.side));
+  function canPassThroughUnit(movingUnit, otherUnit) {
+    const friendlySides = ['player', 'npc'];
+    const bothFriendly = friendlySides.includes(movingUnit.side) && friendlySides.includes(otherUnit.side);
+    const bothEnemy = movingUnit.side === 'enemy' && otherUnit.side === 'enemy';
+    return bothFriendly || bothEnemy;
   }
 
   function getMoveRangeTiles(unit, distances, maxDistance = unit.moveRemaining ?? unit.moveRange) {
