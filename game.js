@@ -1528,6 +1528,7 @@
   }
 
   async function playClearStory(stageId = currentStageId, sectionName = '\uff25\uff30') {
+    introEvent.hidden = true;
     isClearStory = true;
     currentStorySection = sectionName.normalize('NFKC').trim();
     currentEventGoto = '';
@@ -1552,6 +1553,7 @@
       console.error('ＥＰイベントを読み込めませんでした。', error);
       currentStoryText = 'ＥＰイベントを読み込めませんでした。\n' + (error.message || error);
     }
+    introEvent.hidden = false;
     storySkip.hidden = false;
     await revealStoryText();
   }
@@ -1582,7 +1584,6 @@
     await wait(700);
     gameShell.hidden = true;
     gameResult.hidden = true;
-    introEvent.hidden = false;
     playClearStory();
   }
 
