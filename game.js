@@ -2146,7 +2146,6 @@
         clearTransitioning = true;
         isGameOver = true;
         gameShell.hidden = true;
-        introEvent.hidden = false;
         await followEventGoto(gotoCommand[1]);
         reachedEpilogue = true;
         break;
