@@ -1439,9 +1439,8 @@
       await waitForImage(introEventImage);
     }
 
-    await wait(32);
-    requestAnimationFrame(() => introEvent.classList.add('show-image'));
     introEvent.classList.remove('fade-out');
+    await fadeInStoryImage();
     storySkip.hidden = false;
     for (const character of Array.from(currentStoryText)) {
       if (skipStoryReveal) break;
@@ -1530,6 +1529,25 @@
     });
   }
 
+  function fadeInStoryImage() {
+    return new Promise((resolve) => {
+      let fallbackTimer = 0;
+      const finish = () => {
+        window.clearTimeout(fallbackTimer);
+        introEventImage.removeEventListener('transitionend', onTransitionEnd);
+        resolve();
+      };
+      const onTransitionEnd = (event) => {
+        if (event.target === introEventImage && event.propertyName === 'opacity') finish();
+      };
+      introEventImage.addEventListener('transitionend', onTransitionEnd);
+      requestAnimationFrame(() => {
+        introEvent.classList.add('show-image');
+        fallbackTimer = window.setTimeout(finish, 3200);
+      });
+    });
+  }
+
   async function playClearStory(stageId = currentStageId, sectionName = '\uff25\uff30') {
     introEvent.hidden = true;
     introEvent.classList.remove('show-image');
@@ -1559,7 +1577,7 @@
     }
     introEvent.hidden = false;
     if (introEventImage.complete && introEventImage.naturalWidth > 0) {
-      requestAnimationFrame(() => introEvent.classList.add('show-image'));
+      await fadeInStoryImage();
     }
     storySkip.hidden = false;
     await revealStoryText();
