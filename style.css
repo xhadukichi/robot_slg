@@ -76,6 +76,7 @@ body {
 }
 .title-screen.menu-visible .title-menu { opacity: 1; pointer-events: auto; }
 .title-screen.title-load-open .title-menu { pointer-events: none; }
+.title-screen.title-rule-open .title-menu { pointer-events: none; }
 .stage-debug-menu {
   position: absolute;
   z-index: 2;
@@ -391,6 +392,45 @@ h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
 .save-slot-dialog p { min-height: 1.4em; margin: 0 0 10px; color: #a9b9ab; font-size: 12px; }
 .save-slot-dialog > button { width: 100%; padding: 7px; border: 1px solid #637261; border-radius: 4px; background: #29392e; color: #e6eee8; font: 600 13px "Yu Gothic UI", Meiryo, sans-serif; cursor: pointer; }
 .save-slot-dialog > button:hover, .save-slot-dialog > button:focus-visible { border-color: #f1d978; color: #f1d978; }
+.game-rule-dialog {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, .62);
+}
+.game-rule-dialog[hidden] { display: none; }
+.game-rule-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  max-height: min(88vh, 820px);
+  padding: clamp(16px, 3vw, 28px);
+  border: 1px solid #f1d978;
+  border-radius: 6px;
+  background: #17221ff5;
+  color: #f2e9d6;
+  box-shadow: 0 12px 44px #000d;
+}
+.game-rule-panel h2 { margin: 0 0 14px; color: #f1d978; font-size: 20px; }
+.game-rule-content {
+  overflow: auto;
+  min-height: 0;
+  padding: 2px 12px 12px 2px;
+  line-height: 1.8;
+  overscroll-behavior: contain;
+}
+.game-rule-content h3 { margin: 20px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #59664c; color: #f1d978; font-size: 17px; }
+.game-rule-content h3:first-child { margin-top: 0; }
+.game-rule-content h4 { margin: 16px 0 5px; color: #a9d8ac; font-size: 15px; }
+.game-rule-content h5 { margin: 12px 0 3px; color: #ffe2a5; font-size: 14px; }
+.game-rule-content p { margin: 4px 0 9px; }
+.game-rule-content ul { margin: 4px 0 10px; padding-left: 1.5em; }
+.game-rule-content li { padding-left: .2em; }
+.game-rule-panel > button { flex: 0 0 auto; min-height: 40px; margin-top: 12px; border: 1px solid #637261; border-radius: 4px; background: #29392e; color: #e6eee8; font: 600 14px "Yu Gothic UI", Meiryo, sans-serif; cursor: pointer; }
+.game-rule-panel > button:hover, .game-rule-panel > button:focus-visible { border-color: #f1d978; color: #f1d978; outline: none; }
 @media (max-width: 560px) {
   .save-slot-dialog ol { grid-template-columns: 1fr; }
 }

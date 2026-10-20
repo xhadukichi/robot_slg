@@ -37,6 +37,8 @@
   const debugPanel = document.querySelector('#debug-panel');
   const debugUnitSelect = document.querySelector('#debug-unit');
   const emptyCommand = document.querySelector('#empty-command');
+  const gameRuleDialog = document.querySelector('#game-rule-dialog');
+  const gameRuleContent = document.querySelector('#game-rule-content');
   const saveSlotDialog = document.querySelector('#save-slot-dialog');
   const saveSlotDialogParent = saveSlotDialog.parentElement;
   const saveSlotTitle = document.querySelector('#save-slot-title');
@@ -79,6 +81,7 @@
   let audioUnlocked = false;
   let phaseInputLocked = false;
   let titleSelection = 1;
+  let rulesReturnToTitle = false;
   let titleTransitioning = false;
   let titleOpening = false;
   let titleIntroComplete = false;
@@ -640,8 +643,22 @@
     if (action === 'confirm-turn') {
       emptyCommand.hidden = true;
       openTurnConfirmation();
+    } else if (action === 'rules') {
+      openGameRules(false);
     } else if (action === 'save' || action === 'load') {
       openSaveSlotList(action);
+    }
+  });
+
+  gameRuleDialog.addEventListener('click', (event) => {
+    if (event.target.closest('[data-action="close-game-rules"]') || event.target === gameRuleDialog) {
+      closeGameRules();
+    }
+  });
+  gameRuleDialog.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' || event.key.toLowerCase() === 'z') {
+      event.preventDefault();
+      closeGameRules();
     }
   });
 
@@ -1102,6 +1119,7 @@
     updateTitleSelection();
     if (button.dataset.titleAction === 'new') startNewGame();
     else if (button.dataset.titleAction === 'load') openTitleLoadList();
+    else if (button.dataset.titleAction === 'rules') openGameRules(true);
   });
 
   stageDebugMenu.addEventListener('click', (event) => {
@@ -1183,7 +1201,8 @@
     }
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       event.preventDefault();
-      titleSelection = 1 - titleSelection;
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      titleSelection = (titleSelection + direction + titleOptions.length) % titleOptions.length;
       updateTitleSelection();
       return;
     }
@@ -1192,7 +1211,88 @@
     event.preventDefault();
     if (titleOptions[titleSelection]?.dataset.titleAction === 'new') startNewGame();
     else if (titleOptions[titleSelection]?.dataset.titleAction === 'load') openTitleLoadList();
+    else if (titleOptions[titleSelection]?.dataset.titleAction === 'rules') openGameRules(true);
   });
+
+  async function openGameRules(fromTitle) {
+    rulesReturnToTitle = fromTitle;
+    if (fromTitle) titleScreen.classList.add('title-rule-open');
+    else emptyCommand.hidden = true;
+    gameRuleDialog.hidden = false;
+    gameRuleContent.textContent = '読み込み中…';
+    gameRuleDialog.querySelector('[data-action="close-game-rules"]')?.focus();
+    try {
+      renderGameRules(await loadEventScript('Data/Rule.txt'));
+    } catch (error) {
+      gameRuleContent.textContent = `ルールを読み込めませんでした。Data/Rule.txt を確認してください。\n${error.message || error}`;
+    }
+  }
+
+  function closeGameRules() {
+    gameRuleDialog.hidden = true;
+    if (rulesReturnToTitle) {
+      titleScreen.classList.remove('title-rule-open');
+      titleOptions[titleSelection]?.focus();
+    } else {
+      emptyCommand.hidden = false;
+      emptyCommand.querySelector('[data-action="rules"]')?.focus();
+      draw();
+    }
+    rulesReturnToTitle = false;
+  }
+
+  function renderGameRules(source) {
+    gameRuleContent.replaceChildren();
+    let paragraph = [];
+    let list = null;
+    const flushParagraph = () => {
+      if (!paragraph.length) return;
+      const element = document.createElement('p');
+      element.textContent = paragraph.join('');
+      gameRuleContent.append(element);
+      paragraph = [];
+    };
+    const closeList = () => { list = null; };
+
+    for (const rawLine of source.replace(/\r/g, '').split('\n')) {
+      const line = rawLine.trim();
+      if (!line) {
+        flushParagraph();
+        closeList();
+      } else if (line.startsWith('●')) {
+        flushParagraph();
+        closeList();
+        const heading = document.createElement('h3');
+        heading.textContent = line.slice(1).trim();
+        gameRuleContent.append(heading);
+      } else if (line.startsWith('【') && line.endsWith('】')) {
+        flushParagraph();
+        closeList();
+        const heading = document.createElement('h4');
+        heading.textContent = line.slice(1, -1);
+        gameRuleContent.append(heading);
+      } else if (line.startsWith('《') && line.endsWith('》')) {
+        flushParagraph();
+        closeList();
+        const heading = document.createElement('h5');
+        heading.textContent = line;
+        gameRuleContent.append(heading);
+      } else if (line.startsWith('〇')) {
+        flushParagraph();
+        if (!list) {
+          list = document.createElement('ul');
+          gameRuleContent.append(list);
+        }
+        const item = document.createElement('li');
+        item.textContent = line.slice(1).trim();
+        list.append(item);
+      } else {
+        closeList();
+        paragraph.push(line);
+      }
+    }
+    flushParagraph();
+  }
 
   function updateTitleSelection() {
     titleOptions.forEach((button, index) => {

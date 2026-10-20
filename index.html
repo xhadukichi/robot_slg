@@ -16,6 +16,7 @@
         <div class="title-options" role="menu" aria-label="タイトルメニュー">
           <button type="button" data-title-action="new" role="menuitem">Ｎｅｗ　Ｇａｍｅ</button>
           <button type="button" data-title-action="load" role="menuitem">Ｌｏａｄ　Ｇａｍｅ</button>
+          <button type="button" data-title-action="rules" role="menuitem">Ｇａｍｅ　Ｒｕｌｅ</button>
         </div>
       </div>
       <section id="stage-debug-menu" class="stage-debug-menu" role="dialog" aria-modal="true" aria-labelledby="stage-debug-title" hidden>
@@ -110,6 +111,7 @@
         </section>
         <div id="empty-command" class="unit-command empty-command" hidden>
           <button type="button" data-action="confirm-turn">ターン終了</button>
+          <button type="button" data-action="rules">ゲームルール</button>
           <button type="button" data-action="save">セーブ</button>
           <button type="button" data-action="load">ロード</button>
         </div>
@@ -147,6 +149,13 @@
         <span class="map-size">MAP 20 × 16 · VIEW 16 × 12</span>
       </footer>
     </main>
+    <section id="game-rule-dialog" class="game-rule-dialog" role="dialog" aria-modal="true" aria-labelledby="game-rule-title" hidden>
+      <div class="game-rule-panel">
+        <h2 id="game-rule-title">ゲームルール</h2>
+        <div id="game-rule-content" class="game-rule-content" aria-live="polite"></div>
+        <button type="button" data-action="close-game-rules">閉じる</button>
+      </div>
+    </section>
     <script src="game.js"></script>
   </body>
 </html>
