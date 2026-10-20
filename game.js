@@ -3249,7 +3249,13 @@
       const path = getNpcGoalPath(npc, goal);
       const moveSteps = Math.max(0, Math.floor(npc.moveRange ?? 0));
       const movementPath = path.slice(0, moveSteps + 1);
-      if (movementPath.length < 2) continue;
+      let safeStopIndex = 0;
+      for (let index = 1; index < movementPath.length; index++) {
+        const position = movementPath[index];
+        if (!isUnitPositionBlocked(npc, position.x, position.y)) safeStopIndex = index;
+      }
+      if (safeStopIndex < 1) continue;
+      movementPath.length = safeStopIndex + 1;
 
       cursor.x = goal.x;
       cursor.y = goal.y;
@@ -3301,6 +3307,7 @@
             !(allowDestructibleObjects && obstacle.destructible))) return true;
         return units.some((other) => {
           if (other === unit) return false;
+          if (areAlliedUnits(unit, other)) return false;
           const otherSize = getFootprintSize(other);
           return overlaps(other.x, other.y, otherSize.width, otherSize.height);
         });
@@ -4228,11 +4235,15 @@
     if (obstacles.some((obstacle) => overlaps(obstacle.x, obstacle.y, 1, 1))) return true;
     return units.some((other) => {
       if (other === unit) return false;
-      if (allowFriendlyTransit && unit.side === 'player' &&
-          (other.side === 'player' || other.side === 'npc')) return false;
+      if (allowFriendlyTransit && areAlliedUnits(unit, other)) return false;
       const otherSize = getFootprintSize(other);
       return overlaps(other.x, other.y, otherSize.width, otherSize.height);
     });
+  }
+
+  function areAlliedUnits(first, second) {
+    const alliedSides = new Set(['player', 'npc']);
+    return first.side === second.side || (alliedSides.has(first.side) && alliedSides.has(second.side));
   }
 
   function getMoveRangeTiles(unit, distances, maxDistance = unit.moveRemaining ?? unit.moveRange) {
