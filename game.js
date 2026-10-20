@@ -108,7 +108,9 @@
   let battleDefeatEvents = new Map();
   let battleObjectDefeatEvent = null;
   let battleEndEvent = null;
+  let battleMovementEvents = new Map();
   let npcDefinitions = new Map();
+  let enemyReinforcementDefinitions = new Map();
   const eventFlags = new Set();
   const completedBattleEvents = new Set();
 
@@ -1783,7 +1785,7 @@
       const turnZeroMessages = parseBattleMessageRecords(extractEventBlock(battleScript, 'ターン　０'));
       if (!turnZeroMessages.length) throw new Error('ターン　０にＭＥＳがありません。');
       await enterStage();
-      await playBattleMessages(turnZeroMessages);
+      await playBattleScriptCommands(extractEventBlock(battleScript, 'ターン　０'));
       announceCurrentTurn();
       playPhaseBgm();
     } catch (error) {
@@ -1802,6 +1804,7 @@
     battleDefeatEvents = battleEvents.defeats;
     battleObjectDefeatEvent = battleEvents.objectDefeat;
     battleEndEvent = battleEvents.end;
+    battleMovementEvents = battleEvents.movements;
     npcDefinitions = parseNpcDefinitions(battleScript);
   }
 
@@ -1873,11 +1876,12 @@
     const attacks = new Map();
     const defenses = new Map();
     const defeats = new Map();
+    const movements = new Map();
     let objectDefeat = null;
     let end = null;
     const names = source.replace(/\r/g, '').split('\n')
       .map((line) => line.trim())
-      .filter((line) => /^(?:攻撃前|撃破)[\t \u3000]+[\d０-９]+$/.test(line));
+      .filter((line) => /^(?:攻撃前|撃破|移動)[\t \u3000]+[\d０-９]+$/.test(line));
 
     for (const name of names) {
       const normalizedName = normalizeBattleLine(name);
@@ -1897,18 +1901,23 @@
       }
 
       const defeatName = normalizedName.match(/^撃破\s+(\d+)$/);
-      if (defeatName?.[1] === '100') {
+      const movementName = normalizedName.match(/^移動\s+(\d+)$/);
+      if (movementName) {
+        const condition = lines.map(normalizeBattleLine).find((line) => /^(?:NPC|PC|EN)\d+\s*\(\d+\s*,\s*\d+\)\s*\(\d+\s*,\s*\d+\)$/.test(line));
+        const match = condition?.match(/^((?:NPC|PC|EN)\d+)\s*\((\d+)\s*,\s*(\d+)\)\s*\((\d+)\s*,\s*(\d+)\)$/);
+        if (match) movements.set(normalizeUnitId(match[1]), { name, lines, bounds: match.slice(2).map(Number) });
+      } else if (defeatName?.[1] === '100') {
         end = { name, lines };
       } else if (defeatName) {
         const objectCondition = lines.map(normalizeBattleLine).find((line) => line === 'OBJ');
-        const condition = lines.map(normalizeBattleLine).find((line) => /^PC\d+$/.test(line));
-        const match = condition?.match(/^PC(\d+)$/);
+        const condition = lines.map(normalizeBattleLine).find((line) => /^(?:PC|NPC|EN)\d+$/.test(line));
+        const match = condition?.match(/^((?:PC|NPC|EN))(\d+)$/);
         if (objectCondition && messages.length) objectDefeat = { name, messages };
-        else if (match) defeats.set(`PC${match[1].padStart(2, '0')}`, { name, messages });
+        else if (match) defeats.set(`${match[1]}${match[2].padStart(2, '0')}`, { name, messages, lines });
       }
     }
 
-    return { attacks, defenses, defeats, objectDefeat, end };
+    return { attacks, defenses, defeats, movements, objectDefeat, end };
   }
 
   async function enterStage() {
@@ -2011,6 +2020,7 @@
   }
 
   function isBattleDirective(line) {
+    if (/^(?:援軍配置\s|カーソル\s|メッセージ消去$|ゲームオーバー$|ステージクリア$|クリアボーナス(?:\s|$)|フラグ\s|GOTO(?:\s|:|：)|IF(?:\s|$))/.test(line)) return true;
     return /^(?:IF\s+PC\d+|IF\s+座標\s+PC\d+|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
       /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|フラグ\s+ON\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
   }
@@ -2107,16 +2117,20 @@
 
     for (const rawLine of selectedLines) {
       const line = normalizeBattleLine(rawLine);
-      const reinforcement = line.match(/^援軍配置\s+(NPC\d+)\s*:\s*\((\d+)\s*,\s*(\d+)\)$/i);
+      const reinforcement = line.match(/^援軍配置\s+((?:NPC|EN)\d+)\s*:\s*\((\d+)\s*,\s*(\d+)\)$/i);
       const cursorCommand = line.match(/^カーソル\s*\((\d+)\s*,\s*(\d+)\)$/);
-      const gotoEpilogue = new RegExp(`^GOTO\\s*:\\s*EVENT_${currentStageId}\\s+EP$`, 'i').test(line.normalize('NFKC'));
-      if (!reinforcement && !cursorCommand && line !== 'ステージクリア' && !gotoEpilogue) {
+      const gotoCommand = line.match(/^GOTO\s*:\s*(.+)$/i);
+      const gameOverCommand = line === 'ゲームオーバー';
+      const clearCommand = line === 'ステージクリア';
+      const flagCommand = line.match(/^フラグ\s+(ON|OFF)\s+(.+)$/i);
+      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || flagCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
+      if (!recognizedCommand) {
         pendingMessageLines.push(rawLine);
         continue;
       }
 
       await flushMessages();
-      if (line === 'ステージクリア') {
+      if (clearCommand) {
         finishGame('ステージクリア');
         await new Promise((resolve) => { battleEndContinueResolve = resolve; });
         clearTransitioning = true;
@@ -2127,27 +2141,41 @@
         clearPromptReady = false;
         isGameOver = false;
         clearTransitioning = false;
-      } else if (gotoEpilogue) {
+      } else if (gotoCommand) {
         clearTransitioning = true;
         isGameOver = true;
         gameShell.hidden = true;
         introEvent.hidden = false;
-        await playClearStory();
+        await followEventGoto(gotoCommand[1]);
         reachedEpilogue = true;
         break;
       } else if (reinforcement) {
-        await deployBattleNpc(reinforcement[1], Number(reinforcement[2]), Number(reinforcement[3]));
-      } else {
+        if (reinforcement[1].toUpperCase().startsWith('EN')) {
+          await deployBattleEnemy(reinforcement[1], Number(reinforcement[2]), Number(reinforcement[3]));
+        } else {
+          await deployBattleNpc(reinforcement[1], Number(reinforcement[2]), Number(reinforcement[3]));
+        }
+      } else if (cursorCommand) {
         cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, Number(cursorCommand[1]) - 1));
         cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, Number(cursorCommand[2]) - 1));
         scrollToCursor();
         await waitForCameraToStop();
         draw();
+      } else if (gameOverCommand) {
+        finishGame('ゲームオーバー');
+        break;
+      } else if (flagCommand) {
+        if (flagCommand[1].toUpperCase() === 'ON') eventFlags.add(flagCommand[2].trim());
+        else eventFlags.delete(flagCommand[2].trim());
       }
     }
 
     await flushMessages();
     return reachedEpilogue;
+  }
+
+  async function playBattleScriptCommands(lines) {
+    return playBattleEndCommands(lines);
   }
 
   async function deployBattleNpc(rawId, mapX, mapY) {
@@ -2193,6 +2221,30 @@
     };
   }
 
+  async function deployBattleEnemy(rawId, mapX, mapY) {
+    const id = normalizeUnitId(rawId);
+    const definition = enemyReinforcementDefinitions.get(id);
+    if (!definition) throw new Error(`EN_Paramに${id}の配置定義がありません。`);
+    const existing = units.find((unit) => unit.id === id);
+    if (existing) units.splice(units.indexOf(existing), 1);
+    const width = Math.ceil((definition.spriteWidth ?? TILE_SIZE) / TILE_SIZE);
+    const height = Math.ceil((definition.spriteHeight ?? TILE_SIZE) / TILE_SIZE);
+    const unit = {
+      ...definition,
+      x: Math.max(0, Math.min(MAP_WIDTH - width, mapX - 1)),
+      y: Math.max(0, Math.min(MAP_HEIGHT - height, mapY - 1)),
+      image: new Image(),
+      moveUsed: false,
+      moveRemaining: definition.moveRange,
+      attackUsed: false,
+      ended: false,
+    };
+    unit.image.src = `Unit/${unit.imageFile}`;
+    await waitForImage(unit.image);
+    units.push(unit);
+    draw();
+  }
+
   async function runBattleAttackEvent(attacker, target) {
     const event = attacker.side === 'player'
       ? battleAttackEvents.get(attacker.id)
@@ -2206,7 +2258,23 @@
     const event = battleDefeatEvents.get(unit.id);
     if (!event || completedBattleEvents.has(event.name)) return;
     completedBattleEvents.add(event.name);
-    await playBattleMessages(event.messages);
+    if (unit.side === 'npc') await playBattleScriptCommands(event.lines);
+    else await playBattleMessages(event.messages);
+  }
+
+  async function runBattleMovementEvents() {
+    for (const [unitId, event] of battleMovementEvents) {
+      const unit = units.find((candidate) => candidate.id === unitId);
+      if (!unit || completedBattleEvents.has(event.name)) continue;
+      const [x1, y1, x2, y2] = event.bounds;
+      const mapX = unit.x + 1;
+      const mapY = unit.y + 1;
+      if (mapX < Math.min(x1, x2) || mapX > Math.max(x1, x2) ||
+          mapY < Math.min(y1, y2) || mapY > Math.max(y1, y2)) continue;
+      completedBattleEvents.add(event.name);
+      await playBattleScriptCommands(event.lines);
+      if (isGameOver || clearTransitioning) return;
+    }
   }
 
   async function runBattleObjectDefeatEvent() {
@@ -2324,6 +2392,7 @@
       units.push({ ...enemyTemplate, id, image: new Image() });
     }
     const configuredObstacles = [];
+    enemyReinforcementDefinitions = new Map();
     const configuredUnitIds = new Set();
     const configureUnit = (unit, id, position, fallbackImageFile = '') => {
       const loadout = unitLoadouts.get(id);
@@ -2404,6 +2473,15 @@
       if (!unit || (!loadout?.imageFile && !stagePreviewMode)) continue;
       configuredUnitIds.add(id);
       configureUnit(unit, id, { x: Number(x) - 1, y: Number(y) - 1 }, loadout?.imageFile ?? `${id}s.png`);
+    }
+
+    for (const id of stageEnemyLoadouts.keys()) {
+      if (configuredUnitIds.has(id)) continue;
+      const unit = units.find((candidate) => candidate.id === id);
+      const loadout = unitLoadouts.get(id);
+      if (!unit || !loadout?.imageFile) continue;
+      configureUnit(unit, id, { x: 0, y: 0 }, loadout.imageFile);
+      enemyReinforcementDefinitions.set(id, { ...unit, image: null });
     }
 
     for (const [id, goal] of npcMovementGoals) {
@@ -3280,6 +3358,7 @@
       await wait(250);
     }
     enemyRangePreview = null;
+    await runBattleMovementEvents();
   }
 
   function getNpcGoalPath(unit, goal) {
