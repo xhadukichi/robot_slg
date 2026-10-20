@@ -3007,10 +3007,6 @@
       await Promise.all([...restoredUnits, ...restoredObstacles].map((entity) => waitForImage(entity.image)));
       units.splice(0, units.length, ...restoredUnits);
       obstacles.splice(0, obstacles.length, ...restoredObstacles);
-      impassableTiles.clear();
-      for (const tile of snapshot.battle.impassableTiles ?? []) impassableTiles.add(tile);
-      lineOfSightBlockedTiles.clear();
-      for (const tile of snapshot.battle.lineOfSightBlockedTiles ?? []) lineOfSightBlockedTiles.add(tile);
       eventFlags.clear();
       for (const flag of snapshot.common.flags ?? []) eventFlags.add(flag);
       completedBattleEvents.clear();
