@@ -63,7 +63,7 @@
   const stagePreviewExit = document.querySelector('#stage-preview-exit');
   const introEvent = document.querySelector('#intro-event');
   const introEventImage = introEvent.querySelector('img');
-  const introImageSource = introEventImage.getAttribute('src');
+  const introImageSource = 'Unit/Event_00.png';
   const storyText = document.querySelector('#story-text');
   const storySpeaker = document.querySelector('#story-speaker');
   const storyWindow = introEvent.querySelector('.story-window');
@@ -1414,6 +1414,7 @@
   }
 
   async function playIntroStory() {
+    introEventImage.hidden = true;
     storyText.textContent = '';
     storyStart.disabled = true;
     storyStart.textContent = '\u300aGame Start\u300b';
@@ -1435,9 +1436,11 @@
       console.error('OPイベントを読み込めませんでした。', error);
       currentStoryText = `OPイベントを読み込めませんでした。\n${error.message || error}\nEvent/Event_${currentStageId}.txt と素材を確認してください。`;
       introEventImage.src = introImageSource;
+      await waitForImage(introEventImage);
     }
 
     await wait(32);
+    introEventImage.hidden = false;
     introEvent.classList.remove('fade-out');
     storySkip.hidden = false;
     for (const character of Array.from(currentStoryText)) {
@@ -1529,6 +1532,7 @@
 
   async function playClearStory(stageId = currentStageId, sectionName = '\uff25\uff30') {
     introEvent.hidden = true;
+    introEventImage.hidden = true;
     isClearStory = true;
     currentStorySection = sectionName.normalize('NFKC').trim();
     currentEventGoto = '';
@@ -1547,6 +1551,7 @@
       const defaultBackground = sectionName.normalize('NFKC').toUpperCase() === 'OP' ? 'Event_01.png' : 'Event_01_ED.png';
       introEventImage.src = 'Unit/' + (epilogue.background || defaultBackground);
       await waitForImage(introEventImage);
+      introEventImage.hidden = false;
       if (epilogue.bgm) setBgm(epilogue.bgm);
       currentStoryText = epilogue.message;
     } catch (error) {
