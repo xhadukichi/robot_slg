@@ -1414,7 +1414,7 @@
   }
 
   async function playIntroStory() {
-    introEventImage.hidden = true;
+    introEvent.classList.remove('show-image');
     storyText.textContent = '';
     storyStart.disabled = true;
     storyStart.textContent = '\u300aGame Start\u300b';
@@ -1440,7 +1440,7 @@
     }
 
     await wait(32);
-    introEventImage.hidden = false;
+    requestAnimationFrame(() => introEvent.classList.add('show-image'));
     introEvent.classList.remove('fade-out');
     storySkip.hidden = false;
     for (const character of Array.from(currentStoryText)) {
@@ -1532,7 +1532,7 @@
 
   async function playClearStory(stageId = currentStageId, sectionName = '\uff25\uff30') {
     introEvent.hidden = true;
-    introEventImage.hidden = true;
+    introEvent.classList.remove('show-image');
     isClearStory = true;
     currentStorySection = sectionName.normalize('NFKC').trim();
     currentEventGoto = '';
@@ -1551,7 +1551,6 @@
       const defaultBackground = sectionName.normalize('NFKC').toUpperCase() === 'OP' ? 'Event_01.png' : 'Event_01_ED.png';
       introEventImage.src = 'Unit/' + (epilogue.background || defaultBackground);
       await waitForImage(introEventImage);
-      introEventImage.hidden = false;
       if (epilogue.bgm) setBgm(epilogue.bgm);
       currentStoryText = epilogue.message;
     } catch (error) {
@@ -1559,6 +1558,9 @@
       currentStoryText = 'ＥＰイベントを読み込めませんでした。\n' + (error.message || error);
     }
     introEvent.hidden = false;
+    if (introEventImage.complete && introEventImage.naturalWidth > 0) {
+      requestAnimationFrame(() => introEvent.classList.add('show-image'));
+    }
     storySkip.hidden = false;
     await revealStoryText();
   }
