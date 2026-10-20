@@ -3591,7 +3591,14 @@
 
     const path = getMovePath(unit, destinationGoal.x, destinationGoal.y, staysWithinHateRange);
     if (path.length < 2) return null;
-    const step = path[Math.min(remainingMove, path.length - 1)];
+    const maxStep = Math.min(remainingMove, path.length - 1);
+    let safeStepIndex = 0;
+    for (let index = 1; index <= maxStep; index++) {
+      const step = path[index];
+      if (!isUnitPositionBlocked(unit, step.x, step.y)) safeStepIndex = index;
+    }
+    if (safeStepIndex === 0) return null;
+    const step = path[safeStepIndex];
     return { x: step.x, y: step.y };
   }
 
@@ -4380,6 +4387,16 @@
       onComplete?.();
       return;
     }
+    // Allies may be crossed while moving, but the unit must always stop on a free footprint.
+    let safeStopIndex = path.length - 1;
+    while (safeStopIndex > 0 && isUnitPositionBlocked(unit, path[safeStopIndex].x, path[safeStopIndex].y)) {
+      safeStopIndex--;
+    }
+    if (safeStopIndex === 0 || isUnitPositionBlocked(unit, path[safeStopIndex].x, path[safeStopIndex].y)) {
+      onComplete?.();
+      return;
+    }
+    path = path.slice(0, safeStopIndex + 1);
     isUnitMoving = true;
     let startedAt = null;
     const millisecondsPerTile = 150;
