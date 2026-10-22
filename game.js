@@ -19,10 +19,17 @@
   const mapBackground = new Image();
   mapBackground.src = 'Unit/M001.png';
   const mapSizeLabel = document.querySelector('.map-size');
+  const mapZoomIn = document.querySelector('#map-zoom-in');
+  const mapZoomReset = document.querySelector('#map-zoom-reset');
+  const mapZoomOut = document.querySelector('#map-zoom-out');
+  let mapZoomLevel = 0;
   const mapScrollbars = {
     x: document.querySelector('#map-scrollbar-x'),
     y: document.querySelector('#map-scrollbar-y'),
   };
+  mapZoomIn.addEventListener('click', () => changeMapZoom(1));
+  mapZoomReset.addEventListener('click', () => changeMapZoom(0, true));
+  mapZoomOut.addEventListener('click', () => changeMapZoom(-1));
   const passabilityLegend = document.querySelector('#passability-legend');
   const coordinates = document.querySelector('#coordinates');
   const unitCommand = document.querySelector('#unit-command');
@@ -62,11 +69,19 @@
   const stagePreviewLabel = document.querySelector('#stage-preview-label');
   const stagePreviewExit = document.querySelector('#stage-preview-exit');
   const introEvent = document.querySelector('#intro-event');
+  const customScreen = document.querySelector('#custom-screen');
+  const customTabs = document.querySelector('#custom-character-tabs');
+  const customCharacterName = document.querySelector('#custom-character-name');
+  const customStatRows = document.querySelector('#custom-stat-rows');
+  const customEquipmentRows = document.querySelector('#custom-equipment-rows');
+  const customClose = document.querySelector('#custom-close');
   const introEventImage = introEvent.querySelector('img');
+  const storyPortrait = document.querySelector('#story-portrait');
   const introImageSource = 'Unit/Event_00.png';
   const storyText = document.querySelector('#story-text');
   const storySpeaker = document.querySelector('#story-speaker');
   const storyWindow = introEvent.querySelector('.story-window');
+  const battleMessagePanel = document.querySelector('#battle-message-panel');
   const storySkip = document.querySelector('#story-skip');
   const storyStart = document.querySelector('#story-start');
   const gameShell = document.querySelector('.game-shell');
@@ -77,6 +92,8 @@
   bgmAudio.volume = bgmVolume;
   let currentBgm = '';
   let loadedBgm = '';
+  let bgmManuallyStopped = false;
+  let bgmStartDeferredUntilPhaseAnnouncement = false;
   let bgmTransitionId = 0;
   let audioUnlocked = false;
   let phaseInputLocked = false;
@@ -100,6 +117,7 @@
   let gameOverSelection = 0;
   let currentStoryText = '';
   let currentEventGoto = '';
+  let customReturnToTitle = false;
   let skipStoryReveal = false;
   let battleEventActive = false;
   let battleMessageResolve = null;
@@ -1074,7 +1092,7 @@
   }
 
   function startCurrentBgm() {
-    if (!audioUnlocked || phaseInputLocked || !currentBgm) return;
+    if (!audioUnlocked || phaseInputLocked || bgmManuallyStopped || bgmStartDeferredUntilPhaseAnnouncement || !currentBgm) return;
     if (loadedBgm !== currentBgm) {
       bgmAudio.pause();
       bgmAudio.currentTime = 0;
@@ -1087,6 +1105,36 @@
 
   function playPhaseBgm() {
     setBgm(currentSide === 'player' ? phaseBgmFiles.player : phaseBgmFiles.enemy);
+  }
+
+  async function stopBgmPlayback() {
+    bgmManuallyStopped = true;
+    await fadeOutBgm();
+  }
+
+  function startBgmPlayback() {
+    bgmManuallyStopped = false;
+  }
+
+  function selectBgmForNextStart(filename) {
+    currentBgm = filename.trim();
+    loadedBgm = '';
+  }
+
+  function playBgmImmediately(filename) {
+    const target = filename.trim();
+    if (!target) return;
+    bgmManuallyStopped = false;
+    bgmStartDeferredUntilPhaseAnnouncement = false;
+    ++bgmTransitionId;
+    bgmAudio.pause();
+    bgmAudio.volume = bgmVolume;
+    currentBgm = target;
+    loadedBgm = '';
+    const wasPhaseInputLocked = phaseInputLocked;
+    phaseInputLocked = false;
+    startCurrentBgm();
+    phaseInputLocked = wasPhaseInputLocked;
   }
 
   function unlockAudio() {
@@ -1125,6 +1173,11 @@
   });
 
   stageDebugMenu.addEventListener('click', (event) => {
+    if (event.target.closest('[data-open-custom-preview]')) {
+      stageDebugMenu.hidden = true;
+      showCustomScreen(true);
+      return;
+    }
     const stageButton = event.target.closest('[data-stage-id]');
     if (stageButton) {
       openStagePreview(stageButton.dataset.stageId);
@@ -1585,6 +1638,10 @@
 
   async function followEventGoto(target) {
     const normalized = target.normalize('NFKC').trim();
+    if (/^CUSTOM$/i.test(normalized)) {
+      showCustomScreen();
+      return;
+    }
     const eventTarget = normalized.match(/^EVENT_(\d+)\s+(.+)$/i);
     if (eventTarget) {
       await playClearStory(eventTarget[1], eventTarget[2]);
@@ -1602,6 +1659,70 @@
     storyStart.textContent = '\u300aClick to Top\u300b';
     storyStart.disabled = false;
   }
+
+  const customPreviewCharacters = [
+    { name: 'ヒロイン', stats: [['HP', '12', 2], ['機動力', '5', 3], ['回避', '5', 4], ['命中補正', '2', 3], ['力', '14（残1）', 2]], equipment: [['武器', 'アサルトライフル（10）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', '追加装甲（1）'], ['＋追加防具', ''], ['＋追加装備', '応急キット（1）'], ['＋追加装備', '']] },
+    { name: 'PC02', stats: [['HP', '12', 2], ['機動力', '4', 3], ['回避', '4', 4], ['命中補正', '1', 3], ['力', '12（残2）', 2]], equipment: [['武器', 'マシンガン（8）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] },
+    { name: 'PC03', stats: [['HP', '25', 2], ['機動力', '4', 3], ['回避', '0', 4], ['命中補正', '1', 3], ['力', '16（残3）', 2]], equipment: [['武器', 'アサルトライフル（10）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] },
+    ...['PC04', 'PC05'].map((name) => ({ name, stats: [['HP', '—', 2], ['機動力', '—', 3], ['回避', '—', 4], ['命中補正', '—', 3], ['力', '—', 2]], equipment: [['武器', ''], ['戦闘服', ''], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] })),
+  ];
+
+  function renderCustomCharacter(index) {
+    const character = customPreviewCharacters[index];
+    customTabs.querySelectorAll('[role="tab"]').forEach((tab, tabIndex) => {
+      tab.setAttribute('aria-selected', String(tabIndex === index));
+      tab.tabIndex = tabIndex === index ? 0 : -1;
+    });
+    customCharacterName.textContent = character.name;
+    customStatRows.replaceChildren(...character.stats.map(([label, value, cost]) => {
+      const row = document.createElement('div');
+      row.className = 'custom-row custom-stat-row';
+      row.innerHTML = `<span class="custom-label"></span><span class="custom-value"></span><button type="button" class="custom-upgrade" aria-label="${label}を強化">＋<small>（要${cost}）</small></button>`;
+      row.children[0].textContent = label;
+      row.children[1].textContent = value;
+      return row;
+    }));
+    customEquipmentRows.replaceChildren(...character.equipment.map(([label, value]) => {
+      const row = document.createElement('div');
+      row.className = 'custom-row custom-equipment-row';
+      row.innerHTML = '<span class="custom-label"></span><span class="custom-equipment-value"></span><button type="button" class="custom-select" aria-label="装備選択">▼</button>';
+      row.children[0].textContent = label;
+      row.children[1].textContent = value || ' ';
+      return row;
+    }));
+  }
+
+  function showCustomScreen(returnToTitle = false) {
+    customReturnToTitle = returnToTitle;
+    introEvent.hidden = true;
+    gameShell.hidden = true;
+    customScreen.hidden = false;
+    customTabs.replaceChildren(...customPreviewCharacters.map((_, index) => {
+      const tab = document.createElement('button');
+      tab.type = 'button';
+      tab.id = `custom-tab-${index + 1}`;
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-controls', 'custom-card');
+      tab.textContent = ['①', '②', '③', '④', '⑤'][index];
+      tab.addEventListener('click', () => renderCustomCharacter(index));
+      return tab;
+    }));
+    renderCustomCharacter(0);
+    customClose.focus();
+  }
+
+  customClose.addEventListener('click', () => {
+    customScreen.hidden = true;
+    if (customReturnToTitle) {
+      customReturnToTitle = false;
+      titleOptions[titleSelection]?.focus();
+      return;
+    }
+    introEvent.hidden = false;
+    storyStart.textContent = '\u300aContinue\u300b';
+    storyStart.disabled = false;
+    storyStart.focus();
+  });
 
   async function showClearStory() {
     clearTransitioning = true;
@@ -1663,6 +1784,8 @@
     clearTransitioning = false;
     clearPromptReady = false;
     isClearStory = false;
+    bgmManuallyStopped = false;
+    bgmStartDeferredUntilPhaseAnnouncement = false;
     setBgm('M001_Title.mp3');
   }
 
@@ -1760,11 +1883,13 @@
     }
   });
 
-  introEvent.addEventListener('click', () => {
-    if (!battleEventActive) return;
+  window.addEventListener('click', (event) => {
+    if (!battleEventActive || event.target.closest('#story-start, #story-skip, .map-zoom-controls')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
     if (storyStart.disabled) revealStoryImmediately();
     else closeBattleMessage();
-  });
+  }, true);
 
   storySkip.addEventListener('click', () => {
     if (storySkip.hidden) return;
@@ -1781,6 +1906,8 @@
 
   async function loadBattleOpening(stageId = currentStageId) {
     currentStageId = String(stageId).padStart(3, '0');
+    bgmManuallyStopped = false;
+    bgmStartDeferredUntilPhaseAnnouncement = false;
     window.clearTimeout(phaseAnnouncementTimer);
     phaseAnnouncement.hidden = true;
     phaseInputLocked = false;
@@ -1810,11 +1937,13 @@
       prepareBattleEventData(battleScript);
       const turnZeroMessages = parseBattleMessageRecords(extractEventBlock(battleScript, 'ターン　０'));
       if (!turnZeroMessages.length) throw new Error('ターン　０にＭＥＳがありません。');
+      bgmStartDeferredUntilPhaseAnnouncement = true;
+      playPhaseBgm();
       await enterStage();
       await playBattleScriptCommands(extractEventBlock(battleScript, 'ターン　０'));
-      announceCurrentTurn();
-      playPhaseBgm();
+      announceCurrentTurn(true);
     } catch (error) {
+      bgmStartDeferredUntilPhaseAnnouncement = false;
       console.error(`${battlePath} を読み込めませんでした。`, error);
       storyText.textContent = `${battlePath} を読み込めませんでした。\n${error.message || error}`;
       storyStart.disabled = false;
@@ -1834,7 +1963,7 @@
     npcDefinitions = parseNpcDefinitions(battleScript);
   }
 
-  function showBattleMessage(message) {
+  function showBattleMessage(message, unitId = '') {
     return new Promise((resolve) => {
       battleMessageResolve = resolve;
       battleEventActive = true;
@@ -1842,11 +1971,27 @@
       storyText.textContent = '';
       storySpeaker.textContent = activeBattleSpeaker;
       storyWindow.classList.toggle('system-message', activeBattleSystemMessage);
+      const portraitId = unitId ? normalizeUnitId(unitId) : '';
+      const portraitSource = /^PC\d{2}$/.test(portraitId)
+        ? `Unit/BU_${portraitId}.png`
+        : '';
+      storyWindow.classList.toggle('with-portrait', Boolean(portraitSource));
+      storyPortrait.hidden = true;
+      storyPortrait.onload = () => { storyPortrait.hidden = false; };
+      storyPortrait.onerror = () => {
+        storyPortrait.hidden = true;
+        storyWindow.classList.remove('with-portrait');
+      };
+      if (portraitSource) {
+        storyPortrait.src = portraitSource;
+        if (storyPortrait.complete && storyPortrait.naturalWidth > 0) storyPortrait.hidden = false;
+      } else storyPortrait.removeAttribute('src');
       storyStart.textContent = '\u300aContinue\u300b';
       storySkip.hidden = true;
       skipStoryReveal = false;
-      introEvent.classList.add('battle-event');
-      introEvent.hidden = false;
+      battleMessagePanel.classList.add('battle-event');
+      battleMessagePanel.append(storyWindow);
+      battleMessagePanel.hidden = false;
       canvas.focus();
       revealStoryText();
     });
@@ -1854,10 +1999,13 @@
 
   function closeBattleMessage() {
     battleEventActive = false;
-    introEvent.hidden = true;
-    introEvent.classList.remove('battle-event');
+    battleMessagePanel.hidden = true;
+    battleMessagePanel.classList.remove('battle-event');
+    introEventImage.after(storyWindow);
     storySkip.hidden = true;
     storySpeaker.textContent = '';
+    storyPortrait.hidden = true;
+    storyWindow.classList.remove('with-portrait');
     storyWindow.classList.remove('system-message');
     storyStart.textContent = '\u300aGame Start\u300b';
     canvas.focus();
@@ -1887,7 +2035,7 @@
       }
       activeBattleSpeaker = message.speaker;
       activeBattleSystemMessage = message.systemMessage;
-      await showBattleMessage(message.text);
+      await showBattleMessage(message.text, message.unitId);
     }
     activeBattleSpeaker = '';
     activeBattleSystemMessage = false;
@@ -2046,6 +2194,10 @@
   }
 
   function isBattleDirective(line) {
+    if (/^BGM\s+(?:ストップ|スタート)$/i.test(line)) return true;
+    if (/^BGM\s+再生\s+\S+$/i.test(line)) return true;
+    if (/^BGM\s+変更\s+\S+$/i.test(line)) return true;
+    if (/^SE\s+再生\s+\S+$/i.test(line)) return true;
     if (/^(?:援軍配置\s|カーソル\s|メッセージ消去$|ゲームオーバー$|ステージクリア$|クリアボーナス(?:\s|$)|フラグ\s|GOTO(?:\s|:|：)|IF(?:\s|$))/.test(line)) return true;
     return /^(?:IF\s+PC\d+|IF\s+座標\s+PC\d+|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
       /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|フラグ\s+ON\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
@@ -2143,13 +2295,18 @@
 
     for (const rawLine of selectedLines) {
       const line = normalizeBattleLine(rawLine);
-      const reinforcement = line.match(/^援軍配置\s+((?:NPC|EN)\d+)\s*:\s*\((\d+)\s*,\s*(\d+)\)$/i);
+      const reinforcement = line.match(/^援軍配置\s+((?:PC|NPC|EN)\d+)\s*:\s*\((\d+)\s*,\s*(\d+)\)$/i);
       const cursorCommand = line.match(/^カーソル\s*\((\d+)\s*,\s*(\d+)\)$/);
       const gotoCommand = line.match(/^GOTO\s*:\s*(.+)$/i);
       const gameOverCommand = line === 'ゲームオーバー';
       const clearCommand = line === 'ステージクリア';
+      const bgmStopCommand = /^BGM\s+ストップ$/i.test(line);
+      const bgmStartCommand = /^BGM\s+スタート$/i.test(line);
+      const bgmPlayCommand = line.match(/^BGM\s+再生\s+(\S+)$/i);
+      const bgmChangeCommand = line.match(/^BGM\s+変更\s+(\S+)$/i);
+      const sePlayCommand = line.match(/^SE\s+再生\s+(\S+)$/i);
       const flagCommand = line.match(/^フラグ\s+(ON|OFF)\s+(.+)$/i);
-      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || flagCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
+      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || flagCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
       if (!recognizedCommand) {
         pendingMessageLines.push(rawLine);
         continue;
@@ -2167,6 +2324,16 @@
         clearPromptReady = false;
         isGameOver = false;
         clearTransitioning = false;
+      } else if (bgmStopCommand) {
+        await stopBgmPlayback();
+      } else if (bgmStartCommand) {
+        startBgmPlayback();
+      } else if (bgmPlayCommand) {
+        playBgmImmediately(bgmPlayCommand[1]);
+      } else if (bgmChangeCommand) {
+        selectBgmForNextStart(bgmChangeCommand[1]);
+      } else if (sePlayCommand) {
+        await playSe(sePlayCommand[1]);
       } else if (gotoCommand) {
         clearTransitioning = true;
         isGameOver = true;
@@ -2331,6 +2498,27 @@
     }
   }
 
+  function changeMapZoom(direction, reset = false) {
+    mapZoomLevel = reset ? 0 : Math.max(-2, Math.min(2, mapZoomLevel + direction));
+    const centerX = camera.x + VIEW_WIDTH / 2;
+    const centerY = camera.y + VIEW_HEIGHT / 2;
+    const scale = 1.2 ** mapZoomLevel;
+    VIEW_WIDTH = Math.min(MAP_WIDTH, Math.max(8, Math.round(MAX_VIEW_WIDTH / scale)));
+    VIEW_HEIGHT = Math.min(MAP_HEIGHT, Math.max(6, Math.round(MAX_VIEW_HEIGHT / scale)));
+    VIEW_PIXEL_WIDTH = TILE_SIZE * VIEW_WIDTH;
+    VIEW_PIXEL_HEIGHT = TILE_SIZE * VIEW_HEIGHT;
+    canvas.width = VIEW_PIXEL_WIDTH;
+    canvas.height = VIEW_PIXEL_HEIGHT;
+    camera.x = Math.max(0, Math.min(MAP_WIDTH - VIEW_WIDTH, centerX - VIEW_WIDTH / 2));
+    camera.y = Math.max(0, Math.min(MAP_HEIGHT - VIEW_HEIGHT, centerY - VIEW_HEIGHT / 2));
+    cameraTarget.x = camera.x;
+    cameraTarget.y = camera.y;
+    mapSizeLabel.textContent = `MAP ${MAP_WIDTH} × ${MAP_HEIGHT} · VIEW ${VIEW_WIDTH} × ${VIEW_HEIGHT}`;
+    mapZoomIn.disabled = mapZoomLevel >= 2;
+    mapZoomOut.disabled = mapZoomLevel <= -2;
+    draw();
+  }
+
   async function applyBattleSetup(source) {
     const parameterTable = parseParameterTable(await loadEventScript('Data/Param_table.txt'));
     unitBaseParameters = parameterTable.units;
@@ -2372,6 +2560,9 @@
     }
     MAP_WIDTH = nextMapWidth;
     MAP_HEIGHT = nextMapHeight;
+    mapZoomLevel = 0;
+    mapZoomIn.disabled = false;
+    mapZoomOut.disabled = false;
     VIEW_WIDTH = Math.min(MAX_VIEW_WIDTH, MAP_WIDTH);
     VIEW_HEIGHT = Math.min(MAX_VIEW_HEIGHT, MAP_HEIGHT);
     VIEW_PIXEL_WIDTH = TILE_SIZE * VIEW_WIDTH;
@@ -2431,6 +2622,7 @@
       unit.evasion = baseParameters.evasion ?? unit.evasion;
       unit.hitBonus = baseParameters.hitBonus ?? unit.hitBonus;
       unit.strength = baseParameters.strength ?? unit.strength;
+      unit.canFly = baseParameters.canFly ?? false;
       unit.spriteWidth = baseParameters.spriteWidth ?? unit.spriteWidth ?? TILE_SIZE;
       unit.spriteHeight = baseParameters.spriteHeight ?? unit.spriteHeight ?? TILE_SIZE;
       unit.weaponTypeId = loadout?.weaponTypeId ?? getDefaultWeaponType(unit);
@@ -2596,6 +2788,7 @@
     const unitFields = new Map([
       ['HP', 'hp'], ['\u79fb\u52d5\u529b', 'moveRange'], ['\u56de\u907f', 'evasion'],
       ['\u547d\u4e2d\u88dc\u6b63', 'hitBonus'], ['\u529b', 'strength'], ['\u30b5\u30a4\u30ba', 'size'],
+      ['\u98db\u884c', 'canFly'],
     ]);
     const weaponFields = new Map([
       ['\u5c04\u7a0b', 'attackRange'], ['\u30c0\u30e1\u30fc\u30b8', 'attackPower'], ['\u547d\u4e2d\u7387', 'accuracy'],
@@ -2660,6 +2853,11 @@
       const outputField = currentFields?.get(fieldName);
       if (!outputField) continue;
       if (outputField === 'se' || outputField === 'hitEffect' || outputField === 'effect') currentType[outputField] = value;
+      else if (outputField === 'canFly') {
+        const normalizedValue = value.normalize('NFKC').toUpperCase();
+        if (['ON', 'TRUE', '1', '\u6709'].includes(normalizedValue)) currentType.canFly = true;
+        else if (['OFF', 'FALSE', '0', '\u7121'].includes(normalizedValue)) currentType.canFly = false;
+      }
       else if (outputField === 'attackRange') {
         const rangeMatch = value.match(/^(\d+)(?:\s*[~〜-]\s*(\d+))?$/);
         if (rangeMatch) {
@@ -2772,7 +2970,7 @@
     let currentId = null;
     for (const rawLine of tryExtractEventBlock(source, 'NPC_Param')) {
       const line = rawLine.replace(/\/\/.*$/, '').normalize('NFKC').trim();
-      const idMatch = line.match(/^(NPC\d+)$/i);
+      const idMatch = line.match(/^((?:NPC|PC)\d+)$/i);
       if (idMatch) {
         currentId = normalizeUnitId(idMatch[1]);
         definitions.set(currentId, {});
@@ -2846,11 +3044,19 @@
     throw new Error(`${blockName} ブロックの括弧が閉じていません。`);
   }
 
-  function announceCurrentTurn() {
+  function announceCurrentTurn(startBgmAtAnnouncement = false) {
     phaseInputLocked = true;
-    fadeOutBgm();
+    if (!startBgmAtAnnouncement) fadeOutBgm();
     phaseAnnouncement.textContent = `${currentSide === 'player' ? 'プレイヤー' : 'エネミー'}ターン：${toFullWidthNumber(sideTurnCounts[currentSide])}`;
     phaseAnnouncement.hidden = false;
+    if (startBgmAtAnnouncement) {
+      bgmStartDeferredUntilPhaseAnnouncement = false;
+      if (!bgmManuallyStopped) {
+        phaseInputLocked = false;
+        startCurrentBgm();
+        phaseInputLocked = true;
+      }
+    }
     window.clearTimeout(phaseAnnouncementTimer);
     phaseAnnouncementTimer = window.setTimeout(() => {
       phaseAnnouncement.hidden = true;
@@ -3409,7 +3615,8 @@
         if (x < 0 || y < 0 || x + footprint.width > MAP_WIDTH || y + footprint.height > MAP_HEIGHT) return true;
         for (let tileY = y; tileY < y + footprint.height; tileY++) {
           for (let tileX = x; tileX < x + footprint.width; tileX++) {
-            if (impassableTiles.has(`${tileX},${tileY}`)) return true;
+            const tile = `${tileX},${tileY}`;
+            if (impassableTiles.has(tile) && (!unit.canFly || lineOfSightBlockedTiles.has(tile))) return true;
           }
         }
         const overlaps = (otherX, otherY, otherWidth, otherHeight) =>
@@ -4010,6 +4217,7 @@
 
   function finishGame(message) {
     isGameOver = true;
+    bgmManuallyStopped = false;
     setBgm(message === 'ステージクリア' ? 'M005_Result.mp3' : 'M006_Event.mp3');
     unitCommand.hidden = true;
     moveConfirmCommand.hidden = true;
@@ -4344,8 +4552,9 @@
     if (x < 0 || y < 0 || x + width > MAP_WIDTH || y + height > MAP_HEIGHT) return true;
     for (let tileY = y; tileY < y + height; tileY++) {
       for (let tileX = x; tileX < x + width; tileX++) {
-        // An intact OBJ also blocks entry; after removal, only the terrain rule remains.
-        if (impassableTiles.has(`${tileX},${tileY}`)) return true;
+        // Flyers cross Type_A terrain, but Type_B terrain still blocks them.
+        const tile = `${tileX},${tileY}`;
+        if (impassableTiles.has(tile) && (!unit.canFly || lineOfSightBlockedTiles.has(tile))) return true;
       }
     }
     const overlaps = (otherX, otherY, otherWidth, otherHeight) =>

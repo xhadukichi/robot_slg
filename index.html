@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Robot＿SLG（仮）</title>
-    <link rel="stylesheet" href="style.css?v=20261020-story-image-fade-2s">
+    <link rel="stylesheet" href="style.css?v=20261023-cursor-position">
   </head>
   <body>
     <button id="audio-start-screen" class="audio-start-screen" type="button">Please click to Game Start</button>
@@ -27,6 +27,7 @@
           <button type="button" data-stage-id="001">Battle_001</button>
           <button type="button" data-stage-id="002">Battle_002</button>
         </div>
+        <button type="button" data-open-custom-preview>改造画面サンプル</button>
         <p id="stage-debug-status" aria-live="polite"></p>
         <button type="button" data-stage-debug-close>閉じる（Ctrl+Q）</button>
       </section>
@@ -34,10 +35,30 @@
     <section id="intro-event" class="intro-event" aria-label="ステージ前イベント" hidden>
       <img alt="イベント挿絵" />
       <div class="story-window">
-        <div id="story-speaker" class="story-speaker"></div>
-        <div id="story-text" class="story-text" aria-live="polite"></div>
-        <button id="story-skip" class="story-skip" type="button">《SKIP》</button>
-        <button id="story-start" class="story-start" type="button" disabled>《Game Start》</button>
+        <div class="battle-message-layout">
+          <img id="story-portrait" class="story-portrait" alt="" hidden />
+          <div class="battle-message-content">
+            <div id="story-speaker" class="story-speaker"></div>
+            <div id="story-text" class="story-text" aria-live="polite"></div>
+            <button id="story-skip" class="story-skip" type="button">《SKIP》</button>
+            <button id="story-start" class="story-start" type="button" disabled>《Game Start》</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section id="custom-screen" class="custom-screen" aria-label="改造画面" hidden>
+      <div class="custom-panel">
+        <header class="custom-header">
+          <h1>ユニット改造</h1>
+          <div class="custom-points"><span>成長ポイント <strong id="custom-growth-points">100</strong></span><span>軍資金 <strong id="custom-funds">1000</strong></span></div>
+        </header>
+        <div id="custom-character-tabs" class="custom-character-tabs" role="tablist" aria-label="キャラクター"></div>
+        <div id="custom-card" class="custom-card">
+          <div class="custom-row custom-name-row"><span class="custom-label">名前</span><strong id="custom-character-name">ヒロイン</strong><span></span></div>
+          <div id="custom-stat-rows"></div>
+          <div id="custom-equipment-rows"></div>
+        </div>
+        <footer class="custom-footer"><button id="custom-purchase" type="button">装備購入</button><button id="custom-close" type="button">戻る</button></footer>
       </div>
     </section>
     <main class="game-shell" hidden>
@@ -48,6 +69,12 @@
         </div>
         <p class="help">クリック / Space・Enter・X：決定　Esc・Z：キャンセル</p>
       </header>
+      <nav class="map-zoom-controls" aria-label="マップ倍率">
+        <span class="map-cursor-position">カーソル <strong id="coordinates">X 1, Y 1</strong></span>
+        <button id="map-zoom-in" type="button" aria-label="マップを拡大">＋</button>
+        <button id="map-zoom-reset" type="button" aria-label="マップ倍率を通常に戻す">◎</button>
+        <button id="map-zoom-out" type="button" aria-label="マップを縮小">ー</button>
+      </nav>
       <div id="stage-preview-banner" class="stage-preview-banner" hidden>
         <strong id="stage-preview-label">マップ配置確認</strong>
         <span>プレビュー中はユニットを操作できません。</span>
@@ -139,12 +166,11 @@
           </div>
         </div>
       </section>
+      <section id="battle-message-panel" class="battle-message-panel" aria-label="戦闘イベントメッセージ" hidden></section>
       <div id="touch-controls" class="touch-controls" hidden>
         <button id="cancel-action" type="button">キャンセル / 戻る</button>
       </div>
       <footer class="status" aria-live="polite">
-        <span>カーソル</span>
-        <strong id="coordinates">X 1, Y 1</strong>
         <strong id="phase-label">第1ターン・PCフェイズ</strong>
         <span class="map-size">MAP 20 × 16 · VIEW 16 × 12</span>
       </footer>
@@ -156,6 +182,6 @@
         <button type="button" data-action="close-game-rules">閉じる</button>
       </div>
     </section>
-    <script src="game.js?v=20261020-story-image-fade-3s"></script>
+    <script src="game.js?v=20261023-cursor-position"></script>
   </body>
 </html>

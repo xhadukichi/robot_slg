@@ -140,9 +140,20 @@ body {
   transition: opacity 2000ms ease;
 }
 .intro-event.show-image > img { opacity: 1; }
-.intro-event.battle-event { background: transparent; pointer-events: auto; }
-.intro-event.battle-event > img { display: none; }
-.intro-event.battle-event .story-window { pointer-events: auto; }
+.battle-message-panel {
+  box-sizing: border-box;
+  width: 100%;
+  height: clamp(190px, 24vh, 230px);
+  margin: 0 0 18px;
+}
+.battle-message-panel[hidden] { display: block; visibility: hidden; pointer-events: none; }
+.battle-message-panel .story-window { position: relative; inset: auto; width: 100%; height: 100%; max-height: none; margin: 0; }
+.battle-message-panel .battle-message-layout { display: flex; align-items: flex-end; gap: 40px; }
+.battle-message-panel .battle-message-content { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.battle-message-panel .story-portrait { display: block; width: 120px; height: 136px; flex: 0 0 120px; object-fit: contain; object-position: center bottom; }
+.battle-message-panel .story-portrait[hidden] { display: none; }
+.intro-event:not(.battle-event) .battle-message-layout,
+.intro-event:not(.battle-event) .battle-message-content { display: contents; }
 .story-speaker:empty { display: none; }
 .story-speaker:not(:empty) {
   align-self: flex-start;
@@ -181,11 +192,16 @@ body {
   overflow-wrap: anywhere;
   scrollbar-color: #b3a77b #20282b;
 }
-.intro-event.battle-event .story-text {
+.battle-message-panel .story-text {
   flex: 0 0 3.6em;
   height: 3.6em;
   min-height: 3.6em;
   max-height: 3.6em;
+}
+@media (max-width: 600px) {
+  .battle-message-panel { height: clamp(170px, 30vw, 210px); }
+  .battle-message-panel .battle-message-layout { gap: 10px; }
+  .battle-message-panel .story-portrait { width: min(100px, 30vw); height: min(113px, 34vw); flex-basis: min(100px, 30vw); }
 }
 .story-skip, .story-start {
   align-self: flex-end;
@@ -254,6 +270,29 @@ body {
 }
 
 .game-header { margin-bottom: 16px; }
+.map-zoom-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: -8px 0 8px;
+}
+.map-cursor-position { margin-right: auto; color: #95a198; font: 11px Consolas, monospace; letter-spacing: .06em; }
+.map-cursor-position strong { margin-left: 6px; color: #e9d783; font-weight: 500; }
+.map-zoom-controls button {
+  min-width: 36px;
+  min-height: 32px;
+  padding: 2px 8px;
+  border: 1px solid #637261;
+  border-radius: 4px;
+  background: #202a23;
+  color: #e6eee8;
+  font: 700 20px/1 "Yu Gothic UI", Meiryo, sans-serif;
+  cursor: pointer;
+}
+.map-zoom-controls button:hover:not(:disabled),
+.map-zoom-controls button:focus-visible { border-color: #e3cb75; color: #ffe5a3; }
+.map-zoom-controls button:disabled { opacity: .45; cursor: default; }
 .stage-preview-banner {
   display: flex;
   align-items: center;
@@ -724,4 +763,50 @@ canvas:focus-visible { box-shadow: inset 0 0 0 3px #e3cb75; }
   .game-over-options button { min-height: 38px; font-size: 14px; }
   .map-scrollbar-x { right: 26px; height: 18px; }
   .map-scrollbar-y { right: -22px; bottom: 26px; width: 18px; }
+}
+
+.custom-screen {
+  position: fixed;
+  z-index: 28;
+  inset: 0;
+  display: grid;
+  overflow: auto;
+  place-items: center;
+  padding: clamp(12px, 3vh, 28px) 16px;
+  background: radial-gradient(ellipse at 50% 0, #39483a, #111714 72%);
+  color: #172019;
+}
+.custom-screen[hidden] { display: none; }
+.custom-panel { width: min(720px, 100%); }
+.custom-header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 14px; color: #f2e9d6; }
+.custom-header h1 { font-size: clamp(20px, 4vw, 28px); }
+.custom-points { display: flex; flex-wrap: wrap; justify-content: end; gap: 8px 18px; color: #d5dfd5; font-size: 13px; }
+.custom-points strong { display: inline-block; min-width: 3em; margin-left: 6px; color: #f1d978; font-size: 17px; text-align: right; }
+.custom-character-tabs { display: flex; align-items: end; gap: 4px; }
+.custom-character-tabs button { flex: 1 1 0; min-width: 0; height: 36px; border: 2px solid #161a17; border-bottom: 0; border-radius: 5px 5px 0 0; background: #aab0aa; color: #1b2520; font: 700 16px "Yu Gothic UI", Meiryo, sans-serif; cursor: pointer; transition: flex-grow 180ms ease, height 180ms ease, background-color 180ms ease; }
+.custom-character-tabs button[aria-selected="true"] { z-index: 1; flex-grow: 2; height: 46px; background: #e4efdc; }
+.custom-character-tabs button:focus-visible, .custom-row button:focus-visible, .custom-footer button:focus-visible { outline: 2px solid #f1d978; outline-offset: 2px; }
+.custom-card { overflow: hidden; border: 3px solid #161a17; background: #e4efdc; }
+.custom-row { display: grid; grid-template-columns: minmax(112px, 28%) 1fr 92px; min-height: 39px; border-bottom: 1px solid #687267; }
+.custom-row:last-child { border-bottom: 0; }
+.custom-label, .custom-value, .custom-equipment-value { display: flex; align-items: center; min-width: 0; padding: 5px 9px; border-right: 1px solid #687267; }
+.custom-name-row strong { display: flex; align-items: center; padding: 5px 9px; font-weight: 600; }
+.custom-name-row { background: #e4efdc; }
+.custom-stat-row { background: #dce5f4; }
+.custom-stat-row .custom-value { justify-content: center; }
+.custom-row button { border: 0; border-left: 1px solid #687267; color: #172019; font: 700 17px "Yu Gothic UI", Meiryo, sans-serif; cursor: pointer; }
+.custom-upgrade { background: #dce5f4; }
+.custom-upgrade small { font-size: 11px; font-weight: 500; white-space: nowrap; }
+.custom-upgrade:hover, .custom-select:hover { background: #f5e8b9; }
+.custom-equipment-row { background: #f0f0f0; }
+.custom-equipment-row .custom-label { white-space: nowrap; }
+.custom-select { background: #f0f0f0; }
+.custom-footer { display: flex; justify-content: space-between; margin-top: 16px; }
+.custom-footer button { min-width: 142px; min-height: 42px; border: 2px solid #171a17; background: #fff0c7; color: #1c211c; font: 600 15px "Yu Gothic UI", Meiryo, sans-serif; cursor: pointer; }
+.custom-footer button:last-child { display: block; }
+@media (max-width: 520px) {
+  .custom-header { align-items: start; flex-direction: column; }
+  .custom-points { justify-content: start; }
+  .custom-row { grid-template-columns: minmax(92px, 29%) 1fr 83px; min-height: 36px; font-size: 13px; }
+  .custom-upgrade small { font-size: 10px; }
 }
