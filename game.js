@@ -120,6 +120,7 @@
   let customReturnToTitle = false;
   let skipStoryReveal = false;
   let battleEventActive = false;
+  let battleCommandExecutionDepth = 0;
   let battleMessageResolve = null;
   let battleAttackEvents = new Map();
   let battleDefenseEvents = new Map();
@@ -368,6 +369,7 @@
   setupMapScrollbar(mapScrollbars.y, 'y');
 
   canvas.addEventListener('pointerdown', (event) => {
+    if (battleCommandExecutionDepth > 0) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     lastGestureDragged = false;
     pointerGesture = {
@@ -381,6 +383,7 @@
   });
 
   canvas.addEventListener('pointermove', (event) => {
+    if (battleCommandExecutionDepth > 0) return;
     if (!pointerGesture || event.pointerId !== pointerGesture.pointerId) return;
     const bounds = canvas.getBoundingClientRect();
     const scaleX = canvas.width / bounds.width;
@@ -410,6 +413,7 @@
 
   canvas.addEventListener('wheel', (event) => {
     event.preventDefault();
+    if (battleCommandExecutionDepth > 0) return;
     const bounds = canvas.getBoundingClientRect();
     const scaleX = canvas.width / bounds.width;
     const scaleY = canvas.height / bounds.height;
@@ -422,7 +426,7 @@
   }, { passive: false });
 
   canvas.addEventListener('pointermove', (event) => {
-    if (pointerGesture?.dragging || rangeMode || isUnitMoving || isEnemyAiRunning || isCombatResolving) return;
+    if (battleCommandExecutionDepth > 0 || pointerGesture?.dragging || rangeMode || isUnitMoving || isEnemyAiRunning || isCombatResolving) return;
     const bounds = canvas.getBoundingClientRect();
     const scaleX = canvas.width / bounds.width;
     const scaleY = canvas.height / bounds.height;
@@ -449,7 +453,7 @@
       scrollToCursor();
       return;
     }
-    if (battleEventActive || isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden || !saveSlotDialog.hidden || !attackChoiceCommand.hidden || !itemChoiceCommand.hidden || !itemConfirmCommand.hidden || !precisionConfirmCommand.hidden || !hateConfirmCommand.hidden) return;
+    if (battleCommandExecutionDepth > 0 || battleEventActive || isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden || !saveSlotDialog.hidden || !attackChoiceCommand.hidden || !itemChoiceCommand.hidden || !itemConfirmCommand.hidden || !precisionConfirmCommand.hidden || !hateConfirmCommand.hidden) return;
     canvas.focus();
     emptyCommand.hidden = true;
     const bounds = canvas.getBoundingClientRect();
@@ -1884,11 +1888,17 @@
   });
 
   window.addEventListener('click', (event) => {
-    if (!battleEventActive || event.target.closest('#story-start, #story-skip, .map-zoom-controls')) return;
+    if (battleEventActive) {
+      if (event.target.closest('#story-start, #story-skip')) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (storyStart.disabled) revealStoryImmediately();
+      else closeBattleMessage();
+      return;
+    }
+    if (battleCommandExecutionDepth <= 0 || event.target.closest('.story-window, #story-start, #story-skip, #game-result')) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (storyStart.disabled) revealStoryImmediately();
-    else closeBattleMessage();
   }, true);
 
   storySkip.addEventListener('click', () => {
@@ -2284,6 +2294,28 @@
   }
 
   async function playBattleEndCommands(lines) {
+    if (battleCommandExecutionDepth === 0) {
+      emptyCommand.hidden = true;
+      unitCommand.hidden = true;
+      attackChoiceCommand.hidden = true;
+      itemChoiceCommand.hidden = true;
+      itemConfirmCommand.hidden = true;
+      precisionConfirmCommand.hidden = true;
+      hateConfirmCommand.hidden = true;
+      moveConfirmCommand.hidden = true;
+      turnConfirm.hidden = true;
+      saveSlotDialog.hidden = true;
+      unitStatus.hidden = true;
+    }
+    battleCommandExecutionDepth++;
+    try {
+      return await runBattleEndCommands(lines);
+    } finally {
+      battleCommandExecutionDepth--;
+    }
+  }
+
+  async function runBattleEndCommands(lines) {
     const selectedLines = selectBattleIfBranches(lines);
     let pendingMessageLines = [];
     let reachedEpilogue = false;
@@ -4685,6 +4717,7 @@
     let drag = null;
 
     scrollbar.addEventListener('pointerdown', (event) => {
+      if (battleCommandExecutionDepth > 0) return;
       if (event.pointerType === 'mouse' && event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
@@ -4703,7 +4736,7 @@
     });
 
     scrollbar.addEventListener('pointermove', (event) => {
-      if (!drag || drag.pointerId !== event.pointerId) return;
+      if (battleCommandExecutionDepth > 0 || !drag || drag.pointerId !== event.pointerId) return;
       const bounds = scrollbar.getBoundingClientRect();
       const thumbBounds = thumb.getBoundingClientRect();
       moveThumb(
@@ -4721,6 +4754,10 @@
     scrollbar.addEventListener('pointercancel', endDrag);
 
     scrollbar.addEventListener('keydown', (event) => {
+      if (battleCommandExecutionDepth > 0) {
+        event.preventDefault();
+        return;
+      }
       const current = isHorizontal ? camera.x : camera.y;
       let next = current;
       const previousKey = isHorizontal ? 'ArrowLeft' : 'ArrowUp';
@@ -5130,6 +5167,10 @@
         if (storyStart.disabled) revealStoryImmediately();
         else closeBattleMessage();
       }
+      event.preventDefault();
+      return;
+    }
+    if (battleCommandExecutionDepth > 0) {
       event.preventDefault();
       return;
     }
