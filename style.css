@@ -154,7 +154,7 @@ body {
 .battle-message-panel .battle-message-content { display: flex; min-width: 0; flex: 1; flex-direction: column; }
 .battle-message-panel .story-portrait { display: block; width: var(--portrait-width); height: 136px; flex: 0 0 var(--portrait-width); object-fit: contain; object-position: center bottom; transform: translateY(7px); }
 .battle-message-panel .story-portrait[hidden] { display: none; }
-.battle-message-panel .story-window.system-message:not(.with-portrait) .battle-message-content { margin-left: calc(var(--portrait-width) + var(--portrait-gap)); }
+.story-window.system-message:not(.with-portrait) .battle-message-content { margin-left: calc(var(--portrait-width, 120px) + var(--portrait-gap, 40px)); }
 .intro-event:not(.battle-event):not(.custom-macro-message) .battle-message-layout,
 .intro-event:not(.battle-event):not(.custom-macro-message) .battle-message-content { display: contents; }
 .intro-event.custom-macro-message { --portrait-width: 120px; --portrait-gap: 40px; }
@@ -192,7 +192,7 @@ body {
   color: #ffe5a3;
   font: 700 clamp(14px, 1.5vw, 18px)/1.6 "Yu Gothic UI", Meiryo, sans-serif;
 }
-.story-window.system-message .story-text { color: #ffe45c; }
+.story-window.system-message .story-text { margin-top: clamp(26px, calc(2.4vw + 4px), 33px); color: #ffe45c; }
 .story-window {
   position: absolute;
   z-index: 1;
@@ -225,7 +225,6 @@ body {
   min-height: 3.6em;
   max-height: 3.6em;
 }
-.battle-message-panel .story-window.system-message .story-text { margin-top: clamp(26px, calc(2.4vw + 4px), 33px); }
 @media (max-width: 600px) {
   .battle-message-panel { --portrait-width: min(100px, 30vw); --portrait-gap: 10px; }
   .battle-message-panel { height: clamp(150px, 28vw, 175px); }
