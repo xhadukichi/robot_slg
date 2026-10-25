@@ -2,7 +2,7 @@
   let MAP_WIDTH = 20;
   let MAP_HEIGHT = 16;
   const TILE_SIZE = 64;
-  const STAGE_ID = '000';
+  const STAGE_ID = '001';
   let currentStageId = STAGE_ID;
   const SAVE_FORMAT_VERSION = 1;
   const SAVE_INDEX_STORAGE_KEY = 'robot-slg-save-index-v1';
@@ -19,6 +19,7 @@
   const mapBackground = new Image();
   mapBackground.src = 'Unit/M001.png';
   const mapSizeLabel = document.querySelector('.map-size');
+  const stageTitleLabel = document.querySelector('#stage-title');
   const mapZoomIn = document.querySelector('#map-zoom-in');
   const mapZoomReset = document.querySelector('#map-zoom-reset');
   const mapZoomOut = document.querySelector('#map-zoom-out');
@@ -70,11 +71,20 @@
   const stagePreviewExit = document.querySelector('#stage-preview-exit');
   const introEvent = document.querySelector('#intro-event');
   const customScreen = document.querySelector('#custom-screen');
+  const customDebugPanel = document.querySelector('#custom-debug-panel');
+  const customDebugAmount = document.querySelector('#custom-debug-amount');
   const customTabs = document.querySelector('#custom-character-tabs');
   const customCharacterName = document.querySelector('#custom-character-name');
+  const customGrowthPointsLabel = document.querySelector('#custom-growth-points');
+  const customFundsLabel = document.querySelector('#custom-funds');
   const customStatRows = document.querySelector('#custom-stat-rows');
   const customEquipmentRows = document.querySelector('#custom-equipment-rows');
   const customClose = document.querySelector('#custom-close');
+  const customPurchaseDialog = document.querySelector('#custom-purchase-dialog');
+  const customPurchaseMessage = document.querySelector('#custom-purchase-message');
+  const customPurchaseConfirm = customPurchaseDialog.querySelector('[data-purchase-confirm]');
+  const customPurchaseCancel = customPurchaseDialog.querySelector('[data-purchase-cancel]');
+  const customPurchaseClose = customPurchaseDialog.querySelector('[data-purchase-close]');
   const introEventImage = introEvent.querySelector('img');
   const storyPortrait = document.querySelector('#story-portrait');
   const introImageSource = 'Unit/Event_00.png';
@@ -113,11 +123,18 @@
   let currentStorySection = '';
   let currentEventSaveList = false;
   let saveListReturnToStory = false;
+  let saveListContinueAfterClose = false;
   let gameOverOptionsReady = false;
   let gameOverSelection = 0;
   let currentStoryText = '';
   let currentEventGoto = '';
   let customReturnToTitle = false;
+  let customSaveAfterClose = false;
+  let customMacroActive = false;
+  let customMacroMessages = [];
+  let customMacroMessageIndex = 0;
+  let customMacroHasMessageEnd = false;
+  let customMacroPostGoto = '';
   let skipStoryReveal = false;
   let battleEventActive = false;
   let battleCommandExecutionDepth = 0;
@@ -216,12 +233,35 @@
   window.addEventListener('keydown', (event) => {
     if (event.ctrlKey && event.key.toLowerCase() === 'q') {
       event.preventDefault();
-      if (!titleScreen.hidden) {
+      if (!customScreen.hidden) {
+        customDebugPanel.hidden = !customDebugPanel.hidden;
+        if (!customDebugPanel.hidden) customDebugAmount.focus();
+      } else if (!saveSlotDialog.hidden) {
+        saveSlotDeletionMode = !saveSlotDeletionMode;
+        updateSaveSlotModeDisplay();
+        renderSaveSlots();
+      } else if (!titleScreen.hidden) {
         if (titleIntroComplete && !titleOpening && !titleTransitioning) toggleStageDebugMenu();
       } else if (!stagePreviewMode) {
         toggleDebugMode();
       }
     }
+  });
+
+  customDebugPanel.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-debug-resource]');
+    if (!button) return;
+    const amount = Number(customDebugAmount.value);
+    if (!Number.isFinite(amount) || amount < 1) return;
+    const delta = Math.floor(amount) * (button.dataset.debugSign === '+' ? 1 : -1);
+    if (button.dataset.debugResource === 'growth') {
+      customPreviewGrowthPoints = Math.max(0, customPreviewGrowthPoints + delta);
+    } else {
+      customPreviewFunds = Math.max(0, customPreviewFunds + delta);
+    }
+    const selectedIndex = [...customTabs.querySelectorAll('[role="tab"]')]
+      .findIndex((tab) => tab.getAttribute('aria-selected') === 'true');
+    if (selectedIndex >= 0) renderCustomCharacter(selectedIndex);
   });
 
   debugUnitSelect.addEventListener('change', () => {
@@ -333,8 +373,28 @@
   let turnConfirmSelection = 0;
   let emptyCommandSelection = 0;
   let saveSlotMode = 'save';
+  let saveSlotDeletionMode = false;
   let saveListReturnToTitle = false;
   let customPoints = 0;
+  let customFunds = 0;
+  let battleFundsEarned = 0;
+  let battleStageClearConfirmed = false;
+  let customGrowthCosts = new Map();
+  let customPreviewGrowthPoints = 0;
+  let customPreviewProgress = new Map();
+  let customWeaponParameters = new Map();
+  let customWeaponOwners = new Map();
+  let customArmorParameters = new Map();
+  let customItemParameters = new Map();
+  let customPreviewFunds = 0;
+  let customPreviewOwnedWeaponIds = new Map();
+  let customPreviewEquippedWeaponIds = new Map();
+  let customPreviewOwnedArmorIds = new Map();
+  let customPreviewEquippedArmorIds = new Map();
+  let customPreviewOwnedAdditionalArmorIds = new Map();
+  let customPreviewOwnedItemIds = new Map();
+  let customOpenEquipmentMenu = null;
+  let pendingCustomPurchase = null;
   let playerRoster = [];
   let statusFromCommand = false;
   let isGameOver = false;
@@ -692,6 +752,8 @@
     const slotButton = event.target.closest('[data-slot-index]');
     if (closeButton) {
       saveSlotDialog.hidden = true;
+      saveSlotDeletionMode = false;
+      let continueAfterStorySave = false;
       if (saveListReturnToTitle) {
         saveListReturnToTitle = false;
         restoreSaveSlotDialogParent();
@@ -699,12 +761,33 @@
         titleOptions[1]?.focus();
       } else if (saveListReturnToStory) {
         saveListReturnToStory = false;
+        continueAfterStorySave = saveListContinueAfterClose;
+        saveListContinueAfterClose = false;
         restoreSaveSlotDialogParent();
       } else {
         emptyCommand.hidden = false;
       }
+      if (continueAfterStorySave) {
+        const next = currentEventGoto;
+        currentEventGoto = '';
+        if (next) void followEventGoto(next);
+        else if (isClearStory) void returnToTitle();
+        else void loadBattleOpening(currentStageId);
+        return;
+      }
       canvas.focus();
       draw();
+    } else if (slotButton && saveSlotDeletionMode) {
+      const slotIndex = Number(slotButton.dataset.slotIndex);
+      if (!readSaveContents()[slotIndex]) return;
+      const slotName = `データ${String(slotIndex + 1).padStart(2, '0')}`;
+      if (!window.confirm(`${slotName}を削除しますか？この操作は元に戻せません。`)) return;
+      if (deleteSaveGame(slotIndex)) {
+        saveSlotStatus.textContent = `${slotName}を削除しました。`;
+        renderSaveSlots();
+      } else {
+        saveSlotStatus.textContent = `${slotName}を削除できませんでした。`;
+      }
     } else if (slotButton && saveSlotMode === 'save') {
       const slotIndex = Number(slotButton.dataset.slotIndex);
       if (readSaveContents()[slotIndex] &&
@@ -1459,6 +1542,7 @@
     completedBattleEvents.clear();
     eventFlags.clear();
     customPoints = 0;
+    customFunds = 0;
     playerRoster = [];
     introEventImage.src = introImageSource;
     storyStart.textContent = '\u300aGame Start\u300b';
@@ -1640,10 +1724,141 @@
     await revealStoryText();
   }
 
+  function getCustomMacroBlock(lines, openIndex) {
+    let depth = 0;
+    for (let index = openIndex; index < lines.length; index++) {
+      const line = lines[index].trim();
+      if (line.includes('{')) depth++;
+      if (line.startsWith('}else') && depth === 1) {
+        return { lines: lines.slice(openIndex + 1, index), closeIndex: index, hasElse: true };
+      }
+      if (line.includes('}')) {
+        depth--;
+        if (depth === 0) return { lines: lines.slice(openIndex + 1, index), closeIndex: index, hasElse: false };
+      }
+    }
+    throw new Error('Data/Custom.txt のIFブロックが閉じていません。');
+  }
+
+  function parseCustomMacroMessages(lines) {
+    const messages = [];
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index].trim();
+      const commandWithPortrait = line.match(/^MES\s+(.+?)\s+(PC\d+|[\p{L}\p{N}_.-]+\.png)$/iu);
+      const command = commandWithPortrait ?? line.match(/^MES\s+(.+)$/i);
+      if (!command) continue;
+      const body = [];
+      for (index++; index < lines.length; index++) {
+        const line = lines[index].trim();
+        if (/^(?:MES\s|IF\s|ELSE\b|GOTO\b|SAVE\b|セーブ|フラグ\s|RND\s|[{}])/.test(line)) {
+          index--;
+          break;
+        }
+        body.push(line);
+      }
+      const text = body.join('\n').trim().replace(/^「/, '').replace(/」$/, '').trim();
+      if (text) messages.push({
+        speaker: command[1].trim(),
+        portraitSource: commandWithPortrait ? resolveBustupSource(command[2]) : '',
+        text,
+      });
+    }
+    return messages;
+  }
+
+  async function showCustomMacroMessage(index) {
+    const message = customMacroMessages[index];
+    if (!message) return;
+    storyWindow.hidden = false;
+    customMacroMessageIndex = index;
+    const isSystemMessage = normalizeBattleLine(message.speaker) === 'システムメッセージ';
+    storySpeaker.textContent = isSystemMessage ? '' : message.speaker;
+    storyWindow.classList.toggle('system-message', isSystemMessage);
+    setStoryPortrait(message.portraitSource, message.speaker);
+    currentStoryText = message.text;
+    storyText.textContent = '';
+    storyStart.textContent = '\u300aContinue\u300b';
+    storyStart.disabled = true;
+    storySkip.hidden = true;
+    skipStoryReveal = false;
+    introEvent.hidden = false;
+    introEvent.classList.add('custom-macro-message');
+    introEvent.classList.remove('fade-out');
+    await revealStoryText();
+  }
+
+  function closeCustomMacroMessageWindow() {
+    currentStoryText = '';
+    storyText.textContent = '';
+    storySpeaker.textContent = '';
+    setStoryPortrait('', '');
+    storyWindow.classList.remove('system-message');
+    storyWindow.hidden = true;
+  }
+
+  async function startCustomMacro() {
+    try {
+      const source = await loadEventScript('Data/Custom.txt');
+      const lines = source.replace(/\r/g, '').split('\n').map((line) => line.normalize('NFKC').trim());
+      customMacroHasMessageEnd = lines.some((line) => /^MES\s*終了$/i.test(line));
+      const background = lines.find((line) => /^BG\s*:/i.test(line))?.replace(/^BG\s*:\s*/i, '');
+      const bgm = lines.find((line) => /^BGM\s*:/i.test(line))?.replace(/^BGM\s*:\s*/i, '');
+      introEvent.hidden = false;
+      introEvent.classList.remove('fade-out', 'show-image');
+      if (background) {
+        introEventImage.src = `Unit/${background}`;
+        await waitForImage(introEventImage);
+        requestAnimationFrame(() => introEvent.classList.add('show-image'));
+      }
+      if (bgm) setBgm(bgm);
+
+      const firstVisit = !eventFlags.has('物資購入');
+      const introIfIndex = lines.findIndex((line) => /^IF\s+フラグ\s+物資購入$/i.test(line));
+      if (introIfIndex < 0) throw new Error('Data/Custom.txt に「物資購入」のIFがありません。');
+      const trueBlock = getCustomMacroBlock(lines, introIfIndex + 1);
+      if (firstVisit) {
+        const elseOpenIndex = trueBlock.closeIndex + 1;
+        const falseBlock = getCustomMacroBlock(lines, elseOpenIndex);
+        customMacroMessages = parseCustomMacroMessages(falseBlock.lines);
+        eventFlags.add('物資購入');
+      } else {
+        const randomValue = 1 + Math.floor(Math.random() * 3);
+        const randomIfIndex = trueBlock.lines.findIndex((line) => new RegExp(`^IF\\s+RND\\s*=\\s*${randomValue}$`, 'i').test(line));
+        if (randomIfIndex >= 0) {
+          const randomBlock = getCustomMacroBlock(trueBlock.lines, randomIfIndex + 1);
+          customMacroMessages = parseCustomMacroMessages(randomBlock.lines);
+        } else {
+          customMacroMessages = [];
+        }
+      }
+
+      const nextStageTargets = [
+        ['Battle_005', 'EVENT_006 OP'],
+        ['Battle_004', 'EVENT_005 OP'],
+        ['Battle_003', 'EVENT_004 OP'],
+        ['Battle_002', 'EVENT_003 OP'],
+      ];
+      customMacroPostGoto = nextStageTargets.find(([flag]) => eventFlags.has(flag))?.[1] ?? '';
+      customMacroActive = customMacroMessages.length > 0;
+      if (customMacroActive) await showCustomMacroMessage(0);
+      else {
+        if (customMacroHasMessageEnd) closeCustomMacroMessageWindow();
+        await showCustomScreen();
+      }
+    } catch (error) {
+      console.error('Data/Custom.txt のイベントを実行できませんでした。', error);
+      customMacroActive = false;
+      customMacroMessages = [];
+      customMacroHasMessageEnd = false;
+      introEvent.classList.remove('custom-macro-message');
+      await showCustomScreen();
+    }
+  }
+
   async function followEventGoto(target) {
     const normalized = target.normalize('NFKC').trim();
     if (/^CUSTOM$/i.test(normalized)) {
-      showCustomScreen();
+      await startCustomMacro();
       return;
     }
     const eventTarget = normalized.match(/^EVENT_(\d+)\s+(.+)$/i);
@@ -1659,70 +1874,713 @@
       return;
     }
     currentEventGoto = '';
+    isClearStory = true;
     storyText.textContent = `未対応のGOTO先です: ${target}`;
     storyStart.textContent = '\u300aClick to Top\u300b';
     storyStart.disabled = false;
+    storySkip.hidden = true;
+    introEvent.classList.remove('fade-out');
+    introEvent.hidden = false;
   }
 
   const customPreviewCharacters = [
-    { name: 'ヒロイン', stats: [['HP', '12', 2], ['機動力', '5', 3], ['回避', '5', 4], ['命中補正', '2', 3], ['力', '14（残1）', 2]], equipment: [['武器', 'アサルトライフル（10）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', '追加装甲（1）'], ['＋追加防具', ''], ['＋追加装備', '応急キット（1）'], ['＋追加装備', '']] },
-    { name: 'PC02', stats: [['HP', '12', 2], ['機動力', '4', 3], ['回避', '4', 4], ['命中補正', '1', 3], ['力', '12（残2）', 2]], equipment: [['武器', 'マシンガン（8）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] },
-    { name: 'PC03', stats: [['HP', '25', 2], ['機動力', '4', 3], ['回避', '0', 4], ['命中補正', '1', 3], ['力', '16（残3）', 2]], equipment: [['武器', 'アサルトライフル（10）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] },
-    ...['PC04', 'PC05'].map((name) => ({ name, stats: [['HP', '—', 2], ['機動力', '—', 3], ['回避', '—', 4], ['命中補正', '—', 3], ['力', '—', 2]], equipment: [['武器', ''], ['戦闘服', ''], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] })),
+    { id: 'PC01', name: 'ヒロイン', weaponTypeId: 'Type_WEP_001', armorTypeId: 'Type_ARM_001', additionalArmorIds: ['Type_ARM_002', ''], itemTypeIds: ['Type_ITEM_001', ''], stats: [['HP', '12'], ['移動力', '5'], ['回避', '5'], ['命中補正', '2'], ['力', '14（残1）']], equipment: [['武器', 'アサルトライフル（10）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', '追加装甲（1）'], ['＋追加防具', ''], ['＋追加装備', '応急キット（1）'], ['＋追加装備', '']] },
+    { id: 'PC02', name: 'PC02', weaponTypeId: 'Type_WEP_006', armorTypeId: 'Type_ARM_001', stats: [['HP', '12'], ['移動力', '4'], ['回避', '4'], ['命中補正', '1'], ['力', '12（残2）']], equipment: [['武器', 'マシンガン（8）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] },
+    { id: 'PC03', name: 'PC03', weaponTypeId: 'Type_WEP_005', armorTypeId: 'Type_ARM_001', stats: [['HP', '25'], ['移動力', '4'], ['回避', '0'], ['命中補正', '1'], ['力', '25']], equipment: [['武器', 'RPG-7（20）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] },
+    { id: 'PC04', name: 'PC04', weaponTypeId: 'Type_WEP_003', armorTypeId: 'Type_ARM_001', stats: [['HP', '25'], ['移動力', '4'], ['回避', '0'], ['命中補正', '1'], ['力', '25']], equipment: [['武器', 'ハンドガン（3）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] },
+    { id: 'PC05', name: 'PC05', weaponTypeId: 'Type_WEP_002', armorTypeId: 'Type_ARM_001', stats: [['HP', '15'], ['移動力', '5'], ['回避', '3'], ['命中補正', '1'], ['力', '13']], equipment: [['武器', 'ショットガン（8）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] },
+    { id: 'PC06', name: 'PC06', weaponTypeId: 'Type_WEP_004', armorTypeId: 'Type_ARM_001', stats: [['HP', '20'], ['移動力', '8'], ['回避', '4'], ['命中補正', '3'], ['力', '12']], equipment: [['武器', 'レイザーブレード（4）'], ['戦闘服', '通常戦闘服（1）'], ['＋追加防具', ''], ['＋追加防具', ''], ['＋追加装備', ''], ['＋追加装備', '']] },
   ];
+  let visibleCustomCharacters = customPreviewCharacters;
+
+  function getPlayerRosterRecord(characterId) {
+    return playerRoster.find((unit) => normalizeUnitId(unit.id) === normalizeUnitId(characterId));
+  }
+
+  function getStoredCustomStatValue(record, label, fallback) {
+    const stored = record?.customProgress?.[label]?.value;
+    return stored !== undefined ? String(stored) : String(fallback);
+  }
+
+  function persistCustomCharacter(character) {
+    const rosterIndex = playerRoster.findIndex((unit) => normalizeUnitId(unit.id) === normalizeUnitId(character.id));
+    if (rosterIndex < 0) return;
+    const progress = customPreviewProgress.get(character.id);
+    const itemTypeIds = [...(character.itemTypeIds ?? [])];
+    const updated = {
+      ...playerRoster[rosterIndex],
+      weaponTypeId: customPreviewEquippedWeaponIds.get(character.id) ?? character.weaponTypeId,
+      armorTypeId: customPreviewEquippedArmorIds.get(character.id) ?? character.armorTypeId,
+      itemTypeId: itemTypeIds.find(Boolean) ?? '',
+      itemTypeIds,
+      additionalArmorIds: [...(character.additionalArmorIds ?? [])],
+      customProgress: progress ? Object.fromEntries([...progress].map(([label, value]) => [label, { ...value }])) : {},
+      ownedWeaponTypeIds: [...(customPreviewOwnedWeaponIds.get(character.id) ?? [])],
+      ownedArmorTypeIds: [...(customPreviewOwnedArmorIds.get(character.id) ?? [])],
+      ownedAdditionalArmorTypeIds: [...(customPreviewOwnedAdditionalArmorIds.get(character.id) ?? [])],
+      ownedItemTypeIds: [...(customPreviewOwnedItemIds.get(character.id) ?? [])],
+    };
+    playerRoster[rosterIndex] = updated;
+  }
+
+  function applyCustomProgressToUnit(unit) {
+    const values = unit.customProgress ?? {};
+    const statTargets = [
+      ['HP', 'hp'], ['移動力', 'moveRange'], ['回避', 'evasion'], ['命中補正', 'hitBonus'], ['力', 'strength'],
+    ];
+    for (const [label, field] of statTargets) {
+      const valueMatch = String(values[label]?.value ?? '').match(/^-?\d+/);
+      if (!valueMatch) continue;
+      const value = Number(valueMatch[0]);
+      if (label === 'HP') {
+        unit.maxHp = value;
+        unit.hp = value;
+      } else unit[field] = value;
+    }
+  }
+
+  function getCustomCharacterStrength(characterId) {
+    const character = visibleCustomCharacters.find((entry) => entry.id === characterId);
+    const strengthValue = customPreviewProgress.get(characterId)?.get('力')?.value
+      ?? character?.stats.find(([label]) => label === '力')?.[1]
+      ?? '0';
+    return Number(strengthValue.match(/^-?\d+/)?.[0] ?? 0);
+  }
+
+  function getCustomEquippedWeight(character, overrides = {}) {
+    const weaponId = overrides.weaponId ?? customPreviewEquippedWeaponIds.get(character.id) ?? character.weaponTypeId;
+    const armorId = overrides.armorId ?? customPreviewEquippedArmorIds.get(character.id) ?? character.armorTypeId;
+    let total = Number(customWeaponParameters.get(weaponId)?.weight ?? 0)
+      + Number(customArmorParameters.get(armorId)?.weight ?? 0);
+    const additionalArmorIds = overrides.additionalArmorIds ?? character.additionalArmorIds ?? [];
+    const itemTypeIds = overrides.itemTypeIds ?? character.itemTypeIds ?? [];
+    for (const additionalArmorId of additionalArmorIds) {
+      if (additionalArmorId) total += Number(customArmorParameters.get(additionalArmorId)?.weight ?? 0);
+    }
+    for (const itemId of itemTypeIds) {
+      if (itemId) total += Number(customItemParameters.get(itemId)?.weight ?? 0);
+    }
+    return total;
+  }
+
+  function customEquipWouldExceedStrength(characterId, overrides) {
+    const character = visibleCustomCharacters.find((entry) => entry.id === characterId);
+    return !character || getCustomEquippedWeight(character, overrides) > getCustomCharacterStrength(characterId);
+  }
+
+  function showCustomOverweightMessage() {
+    pendingCustomPurchase = null;
+    setCustomPurchaseDialog('装備重量オーバーです', 'message');
+  }
 
   function renderCustomCharacter(index) {
-    const character = customPreviewCharacters[index];
+    const character = visibleCustomCharacters[index];
     customTabs.querySelectorAll('[role="tab"]').forEach((tab, tabIndex) => {
       tab.setAttribute('aria-selected', String(tabIndex === index));
       tab.tabIndex = tabIndex === index ? 0 : -1;
     });
     customCharacterName.textContent = character.name;
-    customStatRows.replaceChildren(...character.stats.map(([label, value, cost]) => {
+    customStatRows.replaceChildren(...character.stats.map(([label, value]) => {
+      const progress = customPreviewProgress.get(character.id)?.get(label) ?? { level: 0, value };
+      const costs = customGrowthCosts.get(character.id)?.get(label) ?? [];
+      const cost = costs[progress.level];
+      const canIncrementValue = /^-?\d+/.test(progress.value);
       const row = document.createElement('div');
       row.className = 'custom-row custom-stat-row';
-      row.innerHTML = `<span class="custom-label"></span><span class="custom-value"></span><button type="button" class="custom-upgrade" aria-label="${label}を強化">＋<small>（要${cost}）</small></button>`;
+      row.innerHTML = `<span class="custom-label"></span><span class="custom-value"></span><button type="button" class="custom-upgrade" aria-label="${label}を強化">＋<small>（${Number.isFinite(cost) ? `要${cost}` : '上限'}）</small></button>`;
       row.children[0].textContent = label;
-      row.children[1].textContent = value;
+      row.children[1].textContent = label === '力'
+        ? `${getCustomCharacterStrength(character.id)}（残${getCustomCharacterStrength(character.id) - getCustomEquippedWeight(character)}）`
+        : progress.value;
+      const upgradeButton = row.children[2];
+      upgradeButton.dataset.characterId = character.id;
+      upgradeButton.dataset.statName = label;
+      upgradeButton.disabled = !Number.isFinite(cost) || cost > customPreviewGrowthPoints || !canIncrementValue;
       return row;
     }));
-    customEquipmentRows.replaceChildren(...character.equipment.map(([label, value]) => {
+    customGrowthPointsLabel.textContent = String(customPreviewGrowthPoints);
+    customFundsLabel.textContent = toFullWidthNumber(customPreviewFunds);
+    customEquipmentRows.replaceChildren(...character.equipment.flatMap(([label, value], equipmentIndex) => {
       const row = document.createElement('div');
       row.className = 'custom-row custom-equipment-row';
-      row.innerHTML = '<span class="custom-label"></span><span class="custom-equipment-value"></span><button type="button" class="custom-select" aria-label="装備選択">▼</button>';
+      row.innerHTML = '<span class="custom-label"></span><span class="custom-equipment-value"></span><button type="button" class="custom-select" aria-label="装備選択" aria-expanded="false">▼</button>';
       row.children[0].textContent = label;
-      row.children[1].textContent = value || ' ';
-      return row;
+      row.children[2].dataset.characterId = character.id;
+      if (label === '武器') {
+        const equippedId = customPreviewEquippedWeaponIds.get(character.id) ?? character.weaponTypeId;
+        const equippedWeapon = customWeaponParameters.get(equippedId);
+        row.children[1].textContent = equippedWeapon
+          ? `${equippedWeapon.name ?? equippedId}（${toFullWidthNumber(equippedWeapon.weight ?? 0)}）`
+          : value || ' ';
+      } else if (label === '戦闘服') {
+        const equippedId = customPreviewEquippedArmorIds.get(character.id) ?? character.armorTypeId;
+        const equippedArmor = customArmorParameters.get(equippedId);
+        row.children[1].textContent = equippedArmor
+          ? `${equippedArmor.name ?? equippedId}（${toFullWidthNumber(equippedArmor.weight ?? 0)}）`
+          : value || ' ';
+      } else {
+        row.children[1].textContent = value || ' ';
+      }
+      const isAdditionalArmor = label === '＋追加防具';
+      const isAdditionalItem = label === '＋追加装備';
+      if (isAdditionalArmor || isAdditionalItem) {
+        const slotIndex = character.equipment.slice(0, equipmentIndex).filter(([entryLabel]) => entryLabel === label).length;
+        const slotIds = isAdditionalArmor ? (character.additionalArmorIds ??= ['', '']) : (character.itemTypeIds ??= ['', '']);
+        const equippedId = slotIds[slotIndex] ?? '';
+        const productParameters = isAdditionalArmor ? customArmorParameters.get(equippedId) : customItemParameters.get(equippedId);
+        row.children[1].textContent = productParameters
+          ? `${productParameters.name ?? equippedId}（${toFullWidthNumber(productParameters.weight ?? 0)}）`
+          : '（未装備）';
+        row.children[2].dataset.equipmentType = isAdditionalArmor ? 'additionalArmor' : 'item';
+        row.children[2].dataset.slotIndex = String(slotIndex);
+        row.children[2].setAttribute('aria-label', `${character.id}の${label}一覧`);
+        const menu = document.createElement('div');
+        menu.className = `custom-equipment-menu custom-${isAdditionalArmor ? 'additional-armor' : 'item'}-menu`;
+        menu.hidden = true;
+        const products = isAdditionalArmor ? customArmorParameters : customItemParameters;
+        const ownedMap = isAdditionalArmor ? customPreviewOwnedAdditionalArmorIds : customPreviewOwnedItemIds;
+        for (const [productId, product] of products) {
+          if (isAdditionalArmor && !/^Type_ARM_00[234]$/.test(productId)) continue;
+          const card = document.createElement('button');
+          card.type = 'button';
+          card.className = 'custom-equipment-card custom-extra-card';
+          card.dataset.characterId = character.id;
+          card.dataset.productId = productId;
+          card.dataset.slotIndex = String(slotIndex);
+          card.dataset.extraType = isAdditionalArmor ? 'additionalArmor' : 'item';
+          const owned = ownedMap.get(character.id)?.has(productId) || product.price === null;
+          const equippedElsewhere = slotIds.some((equippedSlotId, equippedSlotIndex) =>
+            equippedSlotIndex !== slotIndex && equippedSlotId === productId);
+          card.dataset.owned = String(owned);
+          card.dataset.equippedElsewhere = String(equippedElsewhere);
+          card.disabled = equippedElsewhere || (!owned && !Number.isFinite(product.price));
+          const name = document.createElement('strong');
+          name.className = 'custom-equipment-name';
+          name.textContent = `●${product.name ?? productId}`;
+          card.append(name);
+          const fields = [
+            ['価格', equippedElsewhere ? '別スロットで装備中' : owned ? 'ー' : Number.isFinite(product.price) ? toFullWidthNumber(product.price) : '未設定'],
+            ['重量', Number.isFinite(product.weight) ? toFullWidthNumber(product.weight) : '—'],
+          ];
+          if (isAdditionalArmor && Number.isFinite(product.armorCorrection)) fields.push(['装甲補正', toFullWidthNumber(product.armorCorrection)]);
+          if (!isAdditionalArmor && product.effect) fields.push(['効果', product.effect]);
+          for (const [field, fieldValue] of fields) {
+            const line = document.createElement('div');
+            line.className = 'custom-equipment-stat';
+            if (field === '価格') line.classList.add('custom-equipment-price');
+            line.textContent = `${field}：${fieldValue}`;
+            card.append(line);
+          }
+          menu.append(card);
+        }
+        return [row, menu];
+      }
+      if (label !== '武器' && label !== '戦闘服') return [row];
+
+      const equipmentType = label === '武器' ? 'weapon' : 'armor';
+      row.children[2].dataset.equipmentType = equipmentType;
+      row.children[2].setAttribute('aria-label', `${character.id}の${label}一覧`);
+      const menu = document.createElement('div');
+      menu.className = `custom-equipment-menu custom-${equipmentType}-menu`;
+      menu.hidden = true;
+      if (equipmentType === 'armor') {
+        for (const [armorId, armor] of customArmorParameters) {
+          if (!['Type_ARM_001', 'Type_ARM_005'].includes(armorId)) continue;
+          const card = document.createElement('button');
+          card.type = 'button';
+          card.className = 'custom-equipment-card custom-armor-card';
+          card.dataset.characterId = character.id;
+          card.dataset.armorId = armorId;
+          const isOwned = customPreviewOwnedArmorIds.get(character.id)?.has(armorId) || armor.price === null;
+          card.dataset.owned = String(isOwned);
+          card.disabled = !isOwned && !Number.isFinite(armor.price);
+          const name = document.createElement('strong');
+          name.className = 'custom-equipment-name';
+          name.textContent = `●${armor.name ?? armorId}`;
+          card.append(name);
+          const fields = [
+            ['価格', isOwned ? 'ー' : Number.isFinite(armor.price) ? toFullWidthNumber(armor.price) : '未設定'],
+            ['重量', Number.isFinite(armor.weight) ? toFullWidthNumber(armor.weight) : '—'],
+            ['装甲補正', Number.isFinite(armor.armorCorrection) ? toFullWidthNumber(armor.armorCorrection) : '—'],
+          ];
+          for (const [field, fieldValue] of fields) {
+            const line = document.createElement('div');
+            line.className = 'custom-equipment-stat';
+            if (field === '価格') line.classList.add('custom-equipment-price');
+            line.textContent = `${field}：${fieldValue}`;
+            card.append(line);
+          }
+          menu.append(card);
+        }
+        return [row, menu];
+      }
+
+      for (const [weaponId, weapon] of customWeaponParameters) {
+        if (customWeaponOwners.get(weaponId) !== character.id) continue;
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'custom-weapon-card';
+        const weaponName = document.createElement('strong');
+        weaponName.className = 'custom-weapon-name';
+        weaponName.textContent = `●${weapon.name ?? weaponId}`;
+        card.append(weaponName);
+        const isOwned = customPreviewOwnedWeaponIds.get(character.id)?.has(weaponId) || weapon.price === null;
+        card.disabled = !isOwned && !Number.isFinite(weapon.price);
+        card.dataset.characterId = character.id;
+        card.dataset.weaponId = weaponId;
+        card.dataset.owned = String(isOwned);
+        const range = weapon.minAttackRange && weapon.minAttackRange > 1
+          ? `${toFullWidthNumber(weapon.minAttackRange)}～${toFullWidthNumber(weapon.attackRange ?? 0)}`
+          : toFullWidthNumber(weapon.attackRange ?? 0);
+        const fields = [
+          ['価格', isOwned ? 'ー' : Number.isFinite(weapon.price) ? toFullWidthNumber(weapon.price) : '未設定'],
+          ['重量', Number.isFinite(weapon.weight) ? toFullWidthNumber(weapon.weight) : '—'],
+          ['射程', Number.isFinite(weapon.attackRange) ? range : '—'],
+          ['ダメージ', Number.isFinite(weapon.attackPower) ? toFullWidthNumber(weapon.attackPower) : '—'],
+          ['命中率', Number.isFinite(weapon.accuracy) ? toFullWidthNumber(weapon.accuracy) : '—'],
+        ];
+        for (const [field, value] of fields) {
+          const line = document.createElement('div');
+          line.className = 'custom-weapon-stat';
+          if (field === '価格') line.classList.add('custom-weapon-price');
+          line.textContent = `${field}：${value}`;
+          card.append(line);
+        }
+        menu.append(card);
+      }
+      return [row, menu];
     }));
+    if (customOpenEquipmentMenu?.characterId === character.id) {
+      for (const trigger of customEquipmentRows.querySelectorAll('.custom-select[data-equipment-type]')) {
+        if (trigger.dataset.equipmentType !== customOpenEquipmentMenu.equipmentType) continue;
+        if ((trigger.dataset.slotIndex ?? '') !== (customOpenEquipmentMenu.slotIndex ?? '')) continue;
+        const menu = trigger.closest('.custom-equipment-row')?.nextElementSibling;
+        if (!menu?.classList.contains('custom-equipment-menu')) continue;
+        menu.hidden = false;
+        trigger.setAttribute('aria-expanded', 'true');
+        break;
+      }
+    }
   }
 
-  function showCustomScreen(returnToTitle = false) {
+  customEquipmentRows.addEventListener('click', (event) => {
+    const trigger = event.target.closest('.custom-select[data-equipment-type]');
+    if (!trigger) return;
+    const menu = trigger.closest('.custom-equipment-row')?.nextElementSibling;
+    if (!menu?.classList.contains('custom-equipment-menu')) return;
+    const opening = menu.hidden;
+    customEquipmentRows.querySelectorAll('.custom-equipment-menu').forEach((otherMenu) => {
+      otherMenu.hidden = true;
+      otherMenu.previousElementSibling?.querySelector('.custom-select')?.setAttribute('aria-expanded', 'false');
+    });
+    menu.hidden = !opening;
+    trigger.setAttribute('aria-expanded', String(opening));
+    customOpenEquipmentMenu = opening
+      ? { characterId: trigger.dataset.characterId, equipmentType: trigger.dataset.equipmentType, slotIndex: trigger.dataset.slotIndex ?? '' }
+      : null;
+  });
+
+  customEquipmentRows.addEventListener('click', (event) => {
+    const product = event.target.closest('.custom-extra-card:not(:disabled)');
+    if (!product) return;
+    const { characterId, productId, extraType } = product.dataset;
+    const slotIndex = Number(product.dataset.slotIndex);
+    const parameters = (extraType === 'additionalArmor' ? customArmorParameters : customItemParameters).get(productId);
+    if (!parameters) return;
+    const character = visibleCustomCharacters.find((entry) => entry.id === characterId);
+    const currentIds = [...(extraType === 'additionalArmor' ? character?.additionalArmorIds ?? [] : character?.itemTypeIds ?? [])];
+    if (currentIds.some((equippedId, equippedSlotIndex) => equippedSlotIndex !== slotIndex && equippedId === productId)) {
+      setCustomPurchaseDialog('この装備は別のスロットで使用中です。', 'message');
+      return;
+    }
+    if (currentIds[slotIndex] === productId) {
+      pendingCustomPurchase = { action: 'unequipExtra', characterId, productId, extraType, slotIndex };
+      setCustomPurchaseDialog('これは現在装備中です。装備を外しますか？', 'confirm');
+      return;
+    }
+    const nextIds = [...currentIds];
+    nextIds[slotIndex] = productId;
+    const overweight = customEquipWouldExceedStrength(characterId, extraType === 'additionalArmor'
+      ? { additionalArmorIds: nextIds }
+      : { itemTypeIds: nextIds });
+    if (product.dataset.owned === 'true') {
+      if (overweight) {
+        showCustomOverweightMessage();
+        return;
+      }
+      pendingCustomPurchase = { action: 'equipExtra', characterId, productId, extraType, slotIndex };
+      setCustomPurchaseDialog(`装備を「${parameters.name ?? productId}」に変更しますか？`, 'confirm');
+    } else {
+      if (!Number.isFinite(parameters.price)) return;
+      pendingCustomPurchase = { action: 'purchaseExtra', characterId, productId, extraType };
+      setCustomPurchaseDialog(`${parameters.name ?? productId}を購入しますか？\n価格：${toFullWidthNumber(parameters.price)}`, 'confirm');
+    }
+  });
+
+  customEquipmentRows.addEventListener('click', (event) => {
+    const product = event.target.closest('.custom-weapon-card:not(:disabled)');
+    if (!product) return;
+    const { characterId, weaponId } = product.dataset;
+    const weapon = customWeaponParameters.get(weaponId);
+    if (!weapon) return;
+    if (product.dataset.owned === 'true') {
+      if (customEquipWouldExceedStrength(characterId, { weaponId })) {
+        showCustomOverweightMessage();
+        return;
+      }
+      pendingCustomPurchase = { action: 'equip', characterId, weaponId };
+      setCustomPurchaseDialog(`装備をこの武装に変更しますか？\n${weapon.name}`, 'confirm');
+    } else {
+      if (!Number.isFinite(weapon.price)) return;
+      pendingCustomPurchase = { action: 'purchase', characterId, weaponId };
+      setCustomPurchaseDialog(`${weapon.name}を購入しますか？\n価格：${toFullWidthNumber(weapon.price)}`, 'confirm');
+    }
+  });
+
+  customEquipmentRows.addEventListener('click', (event) => {
+    const product = event.target.closest('.custom-armor-card:not(:disabled)');
+    if (!product) return;
+    const { characterId, armorId } = product.dataset;
+    const armor = customArmorParameters.get(armorId);
+    if (!armor) return;
+    if (product.dataset.owned === 'true') {
+      if (customEquipWouldExceedStrength(characterId, { armorId })) {
+        showCustomOverweightMessage();
+        return;
+      }
+      pendingCustomPurchase = { action: 'equipArmor', characterId, armorId };
+      setCustomPurchaseDialog(`装備をこの防具に変更しますか？\n${armor.name}`, 'confirm');
+    } else {
+      if (!Number.isFinite(armor.price)) return;
+      pendingCustomPurchase = { action: 'purchaseArmor', characterId, armorId };
+      setCustomPurchaseDialog(`${armor.name}を購入しますか？\n価格：${toFullWidthNumber(armor.price)}`, 'confirm');
+    }
+  });
+
+  function setCustomPurchaseDialog(message, mode) {
+    customPurchaseMessage.textContent = message;
+    customPurchaseConfirm.hidden = mode !== 'confirm';
+    customPurchaseCancel.hidden = mode !== 'confirm';
+    customPurchaseClose.hidden = mode === 'confirm';
+    if (!customPurchaseDialog.open) customPurchaseDialog.showModal();
+    if (mode === 'confirm') customPurchaseConfirm.focus();
+    else customPurchaseClose.focus();
+  }
+
+  customPurchaseConfirm.addEventListener('click', () => {
+    const purchase = pendingCustomPurchase;
+    pendingCustomPurchase = null;
+    if (!purchase) {
+      customPurchaseDialog.close();
+      return;
+    }
+    if (purchase.action === 'unequipExtra' || purchase.action === 'equipExtra' || purchase.action === 'purchaseExtra') {
+      const isAdditionalArmor = purchase.extraType === 'additionalArmor';
+      const parameters = (isAdditionalArmor ? customArmorParameters : customItemParameters).get(purchase.productId);
+      const ownedMap = isAdditionalArmor ? customPreviewOwnedAdditionalArmorIds : customPreviewOwnedItemIds;
+      const owned = ownedMap.get(purchase.characterId) ?? new Set();
+      ownedMap.set(purchase.characterId, owned);
+      if (!parameters) {
+        customPurchaseDialog.close();
+        return;
+      }
+      if (purchase.action === 'unequipExtra') {
+        const character = visibleCustomCharacters.find((entry) => entry.id === purchase.characterId);
+        if (!character) {
+          customPurchaseDialog.close();
+          return;
+        }
+        const slotIds = [...(isAdditionalArmor ? character.additionalArmorIds ?? [] : character.itemTypeIds ?? [])];
+        if (slotIds[purchase.slotIndex] !== purchase.productId) {
+          customPurchaseDialog.close();
+          return;
+        }
+        slotIds[purchase.slotIndex] = '';
+        if (isAdditionalArmor) character.additionalArmorIds = slotIds;
+        else character.itemTypeIds = slotIds;
+        void playSe('Set.mp3');
+        const characterIndex = visibleCustomCharacters.findIndex((entry) => entry.id === purchase.characterId);
+        if (characterIndex >= 0) renderCustomCharacter(characterIndex);
+        setCustomPurchaseDialog('装備を外しました。', 'message');
+        return;
+      }
+      if (purchase.action === 'equipExtra') {
+        if (!owned.has(purchase.productId) && parameters.price !== null) {
+          customPurchaseDialog.close();
+          return;
+        }
+        const character = visibleCustomCharacters.find((entry) => entry.id === purchase.characterId);
+        const slotIds = [...(isAdditionalArmor ? character?.additionalArmorIds ?? [] : character?.itemTypeIds ?? [])];
+        if (slotIds.some((equippedId, equippedSlotIndex) => equippedSlotIndex !== purchase.slotIndex && equippedId === purchase.productId)) {
+          setCustomPurchaseDialog('この装備は別のスロットで使用中です。', 'message');
+          return;
+        }
+        slotIds[purchase.slotIndex] = purchase.productId;
+        const overrides = isAdditionalArmor ? { additionalArmorIds: slotIds } : { itemTypeIds: slotIds };
+        if (customEquipWouldExceedStrength(purchase.characterId, overrides)) {
+          showCustomOverweightMessage();
+          return;
+        }
+        if (isAdditionalArmor) character.additionalArmorIds = slotIds;
+        else character.itemTypeIds = slotIds;
+        void playSe('Set.mp3');
+        const characterIndex = visibleCustomCharacters.findIndex((entry) => entry.id === purchase.characterId);
+        if (characterIndex >= 0) renderCustomCharacter(characterIndex);
+        setCustomPurchaseDialog(`装備を「${parameters.name ?? purchase.productId}」に変更しました`, 'message');
+        return;
+      }
+      if (!Number.isFinite(parameters.price) || owned.has(purchase.productId)) {
+        customPurchaseDialog.close();
+        return;
+      }
+      if (parameters.price > customPreviewFunds) {
+        setCustomPurchaseDialog('所持金が足りません。', 'message');
+        return;
+      }
+      customPreviewFunds -= parameters.price;
+      owned.add(purchase.productId);
+      void playSe('Buy.mp3');
+      const characterIndex = visibleCustomCharacters.findIndex((entry) => entry.id === purchase.characterId);
+      if (characterIndex >= 0) renderCustomCharacter(characterIndex);
+      setCustomPurchaseDialog('お買い上げありがとうございます', 'message');
+      return;
+    }
+    if (purchase.action === 'equipArmor' || purchase.action === 'purchaseArmor') {
+      const armor = customArmorParameters.get(purchase.armorId);
+      if (!armor) {
+        customPurchaseDialog.close();
+        return;
+      }
+      const ownedArmor = customPreviewOwnedArmorIds.get(purchase.characterId) ?? new Set();
+      customPreviewOwnedArmorIds.set(purchase.characterId, ownedArmor);
+      if (purchase.action === 'equipArmor') {
+        if (!ownedArmor.has(purchase.armorId)) {
+          customPurchaseDialog.close();
+          return;
+        }
+        if (customEquipWouldExceedStrength(purchase.characterId, { armorId: purchase.armorId })) {
+          showCustomOverweightMessage();
+          return;
+        }
+        const changed = customPreviewEquippedArmorIds.get(purchase.characterId) !== purchase.armorId;
+        customPreviewEquippedArmorIds.set(purchase.characterId, purchase.armorId);
+        if (changed) void playSe('Set.mp3');
+        const characterIndex = visibleCustomCharacters.findIndex((character) => character.id === purchase.characterId);
+        if (characterIndex >= 0) renderCustomCharacter(characterIndex);
+        setCustomPurchaseDialog('装備をこの防具に変更しました。', 'message');
+        return;
+      }
+      if (!Number.isFinite(armor.price)) {
+        customPurchaseDialog.close();
+        return;
+      }
+      if (ownedArmor.has(purchase.armorId)) {
+        setCustomPurchaseDialog('この装備はすでに所有しています。', 'message');
+        return;
+      }
+      if (armor.price > customPreviewFunds) {
+        setCustomPurchaseDialog('軍資金が足りません。', 'message');
+        return;
+      }
+      customPreviewFunds -= armor.price;
+      ownedArmor.add(purchase.armorId);
+      void playSe('Buy.mp3');
+      const characterIndex = visibleCustomCharacters.findIndex((character) => character.id === purchase.characterId);
+      if (characterIndex >= 0) renderCustomCharacter(characterIndex);
+      setCustomPurchaseDialog('お買い上げありがとうございます。', 'message');
+      return;
+    }
+    const weapon = customWeaponParameters.get(purchase.weaponId);
+    if (!weapon) {
+      customPurchaseDialog.close();
+      return;
+    }
+    if (purchase.action === 'equip') {
+      const ownedWeapons = customPreviewOwnedWeaponIds.get(purchase.characterId);
+      if (!ownedWeapons?.has(purchase.weaponId)) {
+        customPurchaseDialog.close();
+        return;
+      }
+      if (customEquipWouldExceedStrength(purchase.characterId, { weaponId: purchase.weaponId })) {
+        showCustomOverweightMessage();
+        return;
+      }
+      const changed = customPreviewEquippedWeaponIds.get(purchase.characterId) !== purchase.weaponId;
+      customPreviewEquippedWeaponIds.set(purchase.characterId, purchase.weaponId);
+      if (changed) void playSe('Set.mp3');
+      const characterIndex = visibleCustomCharacters.findIndex((character) => character.id === purchase.characterId);
+      if (characterIndex >= 0) renderCustomCharacter(characterIndex);
+      setCustomPurchaseDialog('装備をこの武装に変更しました。', 'message');
+      return;
+    }
+    if (!Number.isFinite(weapon.price)) {
+      customPurchaseDialog.close();
+      return;
+    }
+    const ownedWeapons = customPreviewOwnedWeaponIds.get(purchase.characterId) ?? new Set();
+    customPreviewOwnedWeaponIds.set(purchase.characterId, ownedWeapons);
+    if (ownedWeapons.has(purchase.weaponId)) {
+      setCustomPurchaseDialog('この武器はすでに所有しています。', 'message');
+      return;
+    }
+    if (weapon.price > customPreviewFunds) {
+      setCustomPurchaseDialog('軍資金が足りません。', 'message');
+      return;
+    }
+    customPreviewFunds -= weapon.price;
+    ownedWeapons.add(purchase.weaponId);
+    void playSe('Buy.mp3');
+    const characterIndex = visibleCustomCharacters.findIndex((character) => character.id === purchase.characterId);
+    if (characterIndex >= 0) renderCustomCharacter(characterIndex);
+    setCustomPurchaseDialog('お買い上げありがとうございます。', 'message');
+  });
+
+  customPurchaseCancel.addEventListener('click', () => {
+    pendingCustomPurchase = null;
+    customPurchaseDialog.close();
+  });
+
+  customPurchaseClose.addEventListener('click', () => customPurchaseDialog.close());
+  customPurchaseDialog.addEventListener('cancel', () => { pendingCustomPurchase = null; });
+
+  async function showCustomScreen(returnToTitle = false) {
+    customSaveAfterClose = false;
+    if (!returnToTitle) {
+      try {
+        const customScript = await loadEventScript('Data/Custom.txt');
+        customSaveAfterClose = customScript.replace(/\r/g, '').split('\n').some((line) => {
+          const command = line.replace(/\/\/.*$/, '').normalize('NFKC').trim();
+          return /^(?:SAVE(?:\s*LIST)?|セーブ(?:リスト)?)$/i.test(command);
+        });
+      } catch (error) {
+        console.warn('Data/Custom.txt のセーブコマンドを読み込めませんでした。', error);
+      }
+    }
+    try {
+      const parameterTable = parseParameterTable(await loadEventScript('Data/Param_table.txt'));
+      customGrowthCosts = parameterTable.growthCosts;
+      customWeaponParameters = parameterTable.weapons;
+      customWeaponOwners = parameterTable.weaponOwners;
+      customArmorParameters = parameterTable.armors;
+      customItemParameters = parameterTable.items;
+    } catch (error) {
+      console.error('PC_GLOWを読み込めませんでした。', error);
+      customGrowthCosts = new Map();
+      customWeaponParameters = new Map();
+      customWeaponOwners = new Map();
+      customArmorParameters = new Map();
+      customItemParameters = new Map();
+    }
+    const registeredPlayerIds = new Set(playerRoster.map((unit) => normalizeUnitId(unit.id)));
+    visibleCustomCharacters = registeredPlayerIds.size
+      ? customPreviewCharacters.filter((character) => registeredPlayerIds.has(normalizeUnitId(character.id)))
+      : customPreviewCharacters;
+    customPreviewOwnedWeaponIds = new Map();
+    customPreviewEquippedWeaponIds = new Map();
+    customPreviewOwnedArmorIds = new Map();
+    customPreviewEquippedArmorIds = new Map();
+    customPreviewOwnedAdditionalArmorIds = new Map();
+    customPreviewOwnedItemIds = new Map();
+    customPreviewProgress = new Map();
+    for (const character of customPreviewCharacters) {
+      const record = getPlayerRosterRecord(character.id);
+      const weaponTypeId = record?.weaponTypeId ?? character.weaponTypeId;
+      const armorTypeId = record?.armorTypeId ?? character.armorTypeId;
+      const additionalArmorIds = Array.isArray(record?.additionalArmorIds)
+        ? [...record.additionalArmorIds]
+        : [...(character.additionalArmorIds ?? ['', ''])];
+      const itemTypeIds = Array.isArray(record?.itemTypeIds)
+        ? [...record.itemTypeIds]
+        : record?.itemTypeId ? [record.itemTypeId, ''] : [...(character.itemTypeIds ?? ['', ''])];
+      character.additionalArmorIds = additionalArmorIds;
+      character.itemTypeIds = itemTypeIds;
+      customPreviewEquippedWeaponIds.set(character.id, weaponTypeId);
+      customPreviewEquippedArmorIds.set(character.id, armorTypeId);
+      customPreviewOwnedWeaponIds.set(character.id, new Set(record?.ownedWeaponTypeIds ?? [weaponTypeId]));
+      customPreviewOwnedArmorIds.set(character.id, new Set(record?.ownedArmorTypeIds ?? [armorTypeId]));
+      customPreviewOwnedAdditionalArmorIds.set(character.id, new Set(record?.ownedAdditionalArmorTypeIds ?? additionalArmorIds.filter(Boolean)));
+      customPreviewOwnedItemIds.set(character.id, new Set(record?.ownedItemTypeIds ?? itemTypeIds.filter(Boolean)));
+      customPreviewProgress.set(character.id, new Map(character.stats.map(([label, baseValue]) => {
+        const savedProgress = record?.customProgress?.[label];
+        return [label, {
+          level: Math.max(0, Number(savedProgress?.level) || 0),
+          value: getStoredCustomStatValue(record, label, baseValue),
+        }];
+      })));
+    }
+    customPreviewGrowthPoints = customPoints;
+    customPreviewFunds = customFunds;
     customReturnToTitle = returnToTitle;
     introEvent.hidden = true;
     gameShell.hidden = true;
     customScreen.hidden = false;
-    customTabs.replaceChildren(...customPreviewCharacters.map((_, index) => {
+    customDebugPanel.hidden = true;
+    customTabs.replaceChildren(...visibleCustomCharacters.map((_, index) => {
       const tab = document.createElement('button');
       tab.type = 'button';
       tab.id = `custom-tab-${index + 1}`;
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-controls', 'custom-card');
-      tab.textContent = ['①', '②', '③', '④', '⑤'][index];
+      const characterId = visibleCustomCharacters[index].id;
+      tab.setAttribute('aria-label', `${characterId} ${visibleCustomCharacters[index].name}`);
+      const portrait = document.createElement('img');
+      portrait.src = `Unit/${characterId}s.png`;
+      portrait.alt = '';
+      portrait.draggable = false;
+      tab.append(portrait);
       tab.addEventListener('click', () => renderCustomCharacter(index));
       return tab;
     }));
-    renderCustomCharacter(0);
+    if (visibleCustomCharacters.length) renderCustomCharacter(0);
     customClose.focus();
   }
 
+  customStatRows.addEventListener('click', (event) => {
+    const button = event.target.closest('.custom-upgrade');
+    if (!button || button.disabled) return;
+    const { characterId, statName } = button.dataset;
+    const progress = customPreviewProgress.get(characterId)?.get(statName);
+    const costs = customGrowthCosts.get(characterId)?.get(statName) ?? [];
+    const cost = costs[progress?.level ?? -1];
+    if (!progress || !Number.isFinite(cost) || cost > customPreviewGrowthPoints) return;
+    const valueMatch = progress.value.match(/^(-?\d+)(.*)$/);
+    if (!valueMatch) return;
+    customPreviewGrowthPoints -= cost;
+    const suffix = statName === '力' ? '' : valueMatch[2];
+    progress.value = `${Number(valueMatch[1]) + 1}${suffix}`;
+    progress.level += 1;
+    void playSe('Put.mp3');
+    renderCustomCharacter(visibleCustomCharacters.findIndex((character) => character.id === characterId));
+  });
+
   customClose.addEventListener('click', () => {
     customScreen.hidden = true;
+    customDebugPanel.hidden = true;
+    customFunds = customPreviewFunds;
+    customPoints = customPreviewGrowthPoints;
+    for (const character of visibleCustomCharacters) persistCustomCharacter(character);
     if (customReturnToTitle) {
       customReturnToTitle = false;
+      customSaveAfterClose = false;
       titleOptions[titleSelection]?.focus();
       return;
     }
+    currentEventSaveList = customSaveAfterClose;
+    currentEventGoto = customMacroPostGoto;
+    customMacroPostGoto = '';
+    customSaveAfterClose = false;
+    if (currentEventSaveList) {
+      currentEventSaveList = false;
+      saveListReturnToStory = true;
+      saveListContinueAfterClose = true;
+      saveSlotDialog.classList.add('floating-save-dialog');
+      document.body.append(saveSlotDialog);
+      openSaveSlotList('save');
+      saveSlotDialog.querySelector('[data-action="close-save-slots"]')?.focus();
+      return;
+    }
     introEvent.hidden = false;
+    storyWindow.hidden = false;
     storyStart.textContent = '\u300aContinue\u300b';
     storyStart.disabled = false;
     storyStart.focus();
@@ -1797,6 +2655,8 @@
     window.clearTimeout(attackMessageTimer);
     window.clearTimeout(phaseAnnouncementTimer);
     pendingPrecisionTarget = null;
+    battleFundsEarned = 0;
+    battleStageClearConfirmed = false;
     if (cameraFrame) cancelAnimationFrame(cameraFrame);
     cameraFrame = 0;
     units.splice(0, units.length, ...initialUnits.map((unit) => ({ ...unit })));
@@ -1863,6 +2723,19 @@
 
   storyStart.addEventListener('click', () => {
     if (battleEventActive) closeBattleMessage();
+    else if (customMacroActive) {
+      if (customMacroMessageIndex + 1 < customMacroMessages.length) {
+        void showCustomMacroMessage(customMacroMessageIndex + 1);
+      } else {
+        customMacroActive = false;
+        if (customMacroHasMessageEnd) closeCustomMacroMessageWindow();
+        customMacroHasMessageEnd = false;
+        storySpeaker.textContent = '';
+        storyWindow.classList.remove('system-message');
+        introEvent.classList.remove('custom-macro-message');
+        void showCustomScreen();
+      }
+    }
     else if (currentEventSaveList) {
       currentEventSaveList = false;
       saveListReturnToStory = true;
@@ -1916,6 +2789,8 @@
 
   async function loadBattleOpening(stageId = currentStageId) {
     currentStageId = String(stageId).padStart(3, '0');
+    battleFundsEarned = 0;
+    battleStageClearConfirmed = false;
     bgmManuallyStopped = false;
     bgmStartDeferredUntilPhaseAnnouncement = false;
     window.clearTimeout(phaseAnnouncementTimer);
@@ -1956,8 +2831,12 @@
       bgmStartDeferredUntilPhaseAnnouncement = false;
       console.error(`${battlePath} を読み込めませんでした。`, error);
       storyText.textContent = `${battlePath} を読み込めませんでした。\n${error.message || error}`;
+      currentEventGoto = '';
+      isClearStory = true;
+      storyStart.textContent = '\u300aClick to Top\u300b';
       storyStart.disabled = false;
       storySkip.hidden = true;
+      introEvent.classList.remove('fade-out');
       introEvent.hidden = false;
     }
   }
@@ -1973,7 +2852,33 @@
     npcDefinitions = parseNpcDefinitions(battleScript);
   }
 
-  function showBattleMessage(message, unitId = '') {
+  function resolveBustupSource(reference = '') {
+    const normalized = normalizeBattleLine(reference);
+    const unitMatch = normalized.match(/^PC(\d+)$/i);
+    if (unitMatch) return `Unit/BU_PC${unitMatch[1].padStart(2, '0')}.png`;
+    const graphicName = normalized.replace(/^Unit[\\/]/i, '');
+    return /^[\p{L}\p{N}_.-]+\.png$/iu.test(graphicName) ? `Unit/${graphicName}` : '';
+  }
+
+  function setStoryPortrait(portraitSource, speaker) {
+    storyPortrait.alt = portraitSource ? speaker : '';
+    storyWindow.classList.toggle('with-portrait', Boolean(portraitSource));
+    storyPortrait.hidden = true;
+    storyPortrait.onload = () => { storyPortrait.hidden = false; };
+    storyPortrait.onerror = () => {
+      storyPortrait.hidden = true;
+      storyWindow.classList.remove('with-portrait');
+      console.warn(`MESのバストアップ画像を読み込めません: ${portraitSource}`);
+    };
+    if (portraitSource) {
+      storyPortrait.src = portraitSource;
+      if (storyPortrait.complete && storyPortrait.naturalWidth > 0) storyPortrait.hidden = false;
+    } else {
+      storyPortrait.removeAttribute('src');
+    }
+  }
+
+  function showBattleMessage(message, unitId = '', portraitReference = '') {
     return new Promise((resolve) => {
       battleMessageResolve = resolve;
       battleEventActive = true;
@@ -1981,21 +2886,7 @@
       storyText.textContent = '';
       storySpeaker.textContent = activeBattleSpeaker;
       storyWindow.classList.toggle('system-message', activeBattleSystemMessage);
-      const portraitId = unitId ? normalizeUnitId(unitId) : '';
-      const portraitSource = /^PC\d{2}$/.test(portraitId)
-        ? `Unit/BU_${portraitId}.png`
-        : '';
-      storyWindow.classList.toggle('with-portrait', Boolean(portraitSource));
-      storyPortrait.hidden = true;
-      storyPortrait.onload = () => { storyPortrait.hidden = false; };
-      storyPortrait.onerror = () => {
-        storyPortrait.hidden = true;
-        storyWindow.classList.remove('with-portrait');
-      };
-      if (portraitSource) {
-        storyPortrait.src = portraitSource;
-        if (storyPortrait.complete && storyPortrait.naturalWidth > 0) storyPortrait.hidden = false;
-      } else storyPortrait.removeAttribute('src');
+      setStoryPortrait(resolveBustupSource(portraitReference) || resolveBustupSource(unitId), activeBattleSpeaker);
       storyStart.textContent = '\u300aContinue\u300b';
       storySkip.hidden = true;
       skipStoryReveal = false;
@@ -2045,7 +2936,7 @@
       }
       activeBattleSpeaker = message.speaker;
       activeBattleSystemMessage = message.systemMessage;
-      await showBattleMessage(message.text, message.unitId);
+      await showBattleMessage(message.text, message.unitId, message.portraitSource);
     }
     activeBattleSpeaker = '';
     activeBattleSystemMessage = false;
@@ -2177,15 +3068,26 @@
     for (const line of lines) {
       const normalizedLine = normalizeBattleLine(line);
       const targetedCommand = normalizedLine.match(/^MES\s+(.+?)\s+((?:PC|EN|NPC)\d+)\s+([YN])$/i);
-      const untargetedCommand = targetedCommand ? null : normalizedLine.match(/^MES\s+(.+)$/i);
+      const portraitCommand = targetedCommand
+        ? null
+        : normalizedLine.match(/^MES\s+(.+?)\s+(PC\d+|[\p{L}\p{N}_.-]+\.png)$/iu);
+      const untargetedCommand = targetedCommand || portraitCommand ? null : normalizedLine.match(/^MES\s+(.+)$/i);
       const nextCommand = targetedCommand
         ? {
           speaker: targetedCommand[1].trim(),
           unitId: normalizeUnitId(targetedCommand[2]),
           followCursor: targetedCommand[3] === 'Y',
+          portraitSource: '',
         }
+        : portraitCommand
+          ? {
+            speaker: portraitCommand[1].trim(),
+            unitId: null,
+            followCursor: false,
+            portraitSource: resolveBustupSource(portraitCommand[2]),
+          }
         : untargetedCommand
-          ? { speaker: untargetedCommand[1].trim(), unitId: null, followCursor: false }
+          ? { speaker: untargetedCommand[1].trim(), unitId: null, followCursor: false, portraitSource: '' }
           : null;
       if (nextCommand) {
         saveMessage();
@@ -2208,9 +3110,9 @@
     if (/^BGM\s+再生\s+\S+$/i.test(line)) return true;
     if (/^BGM\s+変更\s+\S+$/i.test(line)) return true;
     if (/^SE\s+再生\s+\S+$/i.test(line)) return true;
-    if (/^(?:援軍配置\s|カーソル\s|メッセージ消去$|ゲームオーバー$|ステージクリア$|クリアボーナス(?:\s|$)|フラグ\s|GOTO(?:\s|:|：)|IF(?:\s|$))/.test(line)) return true;
-    return /^(?:IF\s+PC\d+|IF\s+座標\s+PC\d+|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
-      /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|フラグ\s+ON\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
+    if (/^(?:援軍配置\s|カーソル\s|メッセージ消去$|ゲームオーバー$|ステージクリア$|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|GOTO(?:\s|:|：)|IF(?:\s|$))/.test(line)) return true;
+    return /^(?:IF\s+PC\d+|IF\s+座標\s+PC\d+|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
+      /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|軍資金\s*(?:\+\s*\d+|支払い)|成長ポイント\s*\+\s*\d+|フラグ\s+ON\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
   }
 
   function extractBattleBraceBlock(lines, startIndex) {
@@ -2338,7 +3240,10 @@
       const bgmChangeCommand = line.match(/^BGM\s+変更\s+(\S+)$/i);
       const sePlayCommand = line.match(/^SE\s+再生\s+(\S+)$/i);
       const flagCommand = line.match(/^フラグ\s+(ON|OFF)\s+(.+)$/i);
-      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || flagCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
+      const battleFundsCommand = line.match(/^軍資金\s*\+\s*(\d+)$/);
+      const payBattleFundsCommand = line === '軍資金 支払い';
+      const growthPointsCommand = line.match(/^成長ポイント\s*\+\s*(\d+)$/);
+      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || flagCommand || battleFundsCommand || payBattleFundsCommand || growthPointsCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
       if (!recognizedCommand) {
         pendingMessageLines.push(rawLine);
         continue;
@@ -2348,6 +3253,7 @@
       if (clearCommand) {
         finishGame('ステージクリア');
         await new Promise((resolve) => { battleEndContinueResolve = resolve; });
+        battleStageClearConfirmed = true;
         clearTransitioning = true;
         gameResult.classList.add('fade-out');
         await wait(700);
@@ -2391,6 +3297,15 @@
       } else if (flagCommand) {
         if (flagCommand[1].toUpperCase() === 'ON') eventFlags.add(flagCommand[2].trim());
         else eventFlags.delete(flagCommand[2].trim());
+      } else if (battleFundsCommand) {
+        battleFundsEarned += Number(battleFundsCommand[1]);
+      } else if (payBattleFundsCommand) {
+        if (battleStageClearConfirmed) {
+          customFunds += battleFundsEarned;
+          battleFundsEarned = 0;
+        }
+      } else if (growthPointsCommand) {
+        customPoints += Number(growthPointsCommand[1]);
       }
     }
 
@@ -2482,7 +3397,7 @@
     const event = battleDefeatEvents.get(unit.id);
     if (!event || completedBattleEvents.has(event.name)) return;
     completedBattleEvents.add(event.name);
-    if (unit.side === 'npc') await playBattleScriptCommands(event.lines);
+    if (unit.side !== 'player') await playBattleScriptCommands(event.lines);
     else await playBattleMessages(event.messages);
   }
 
@@ -2552,26 +3467,38 @@
   }
 
   async function applyBattleSetup(source) {
+    const titleLine = source.replace(/\r/g, '').split('\n')
+      .find((line) => /^タイトル\s*[:：]/.test(line.normalize('NFKC').trim()));
+    const title = titleLine?.trim().replace(/^タイトル\s*[:：]\s*/, '').trim();
+    stageTitleLabel.textContent = title || `ステージ　${currentStageId}`;
     const parameterTable = parseParameterTable(await loadEventScript('Data/Param_table.txt'));
     unitBaseParameters = parameterTable.units;
     npcBaseParameters = parameterTable.npcs;
     weaponParameters = parameterTable.weapons;
+    const weaponOwners = parameterTable.weaponOwners;
     armorParameters = parameterTable.armors;
     itemParameters = parameterTable.items;
     const carriedPlayerLoadouts = new Map(playerRoster.map((unit) => [normalizeUnitId(unit.id), {
-      imageFile: unit.imageFile,
-      unitTypeId: unit.unitTypeId,
-      weaponTypeId: unit.weaponTypeId,
-      armorTypeId: unit.armorTypeId,
-      itemTypeId: unit.itemTypeId,
+      ...unit,
+      customProgress: unit.customProgress ? Object.fromEntries(Object.entries(unit.customProgress).map(([label, progress]) => [label, { ...progress }])) : undefined,
+      additionalArmorIds: Array.isArray(unit.additionalArmorIds) ? [...unit.additionalArmorIds] : undefined,
+      itemTypeIds: Array.isArray(unit.itemTypeIds) ? [...unit.itemTypeIds] : undefined,
+      ownedWeaponTypeIds: Array.isArray(unit.ownedWeaponTypeIds) ? [...unit.ownedWeaponTypeIds] : undefined,
+      ownedArmorTypeIds: Array.isArray(unit.ownedArmorTypeIds) ? [...unit.ownedArmorTypeIds] : undefined,
+      ownedAdditionalArmorTypeIds: Array.isArray(unit.ownedAdditionalArmorTypeIds) ? [...unit.ownedAdditionalArmorTypeIds] : undefined,
+      ownedItemTypeIds: Array.isArray(unit.ownedItemTypeIds) ? [...unit.ownedItemTypeIds] : undefined,
     }]));
     const stagePlayerLoadouts = parseUnitLoadouts(source, 'ADD_Param');
-    for (const [id, loadout] of stagePlayerLoadouts) carriedPlayerLoadouts.set(id, {
-      ...carriedPlayerLoadouts.get(id),
-      ...loadout,
-    });
+    for (const [id, loadout] of stagePlayerLoadouts) {
+      const carried = carriedPlayerLoadouts.get(id);
+      carriedPlayerLoadouts.set(id, carried ? {
+        ...loadout,
+        ...carried,
+        imageFile: loadout.imageFile ?? carried.imageFile,
+      } : { ...loadout });
+    }
     const stageEnemyLoadouts = parseUnitLoadouts(source, 'EN_Param');
-    validateUnitLoadouts(carriedPlayerLoadouts, 'ADD_Param');
+    validateUnitLoadouts(carriedPlayerLoadouts, 'ADD_Param', weaponOwners);
     validateUnitLoadouts(stageEnemyLoadouts, 'EN_Param');
     const unitLoadouts = new Map([
       ...carriedPlayerLoadouts,
@@ -2654,22 +3581,38 @@
       unit.evasion = baseParameters.evasion ?? unit.evasion;
       unit.hitBonus = baseParameters.hitBonus ?? unit.hitBonus;
       unit.strength = baseParameters.strength ?? unit.strength;
+      unit.customProgress = loadout?.customProgress
+        ? Object.fromEntries(Object.entries(loadout.customProgress).map(([label, progress]) => [label, { ...progress }]))
+        : undefined;
+      if (Array.isArray(loadout?.additionalArmorIds)) unit.additionalArmorIds = [...loadout.additionalArmorIds];
+      if (Array.isArray(loadout?.itemTypeIds)) unit.itemTypeIds = [...loadout.itemTypeIds];
+      for (const [unitField, loadoutField] of [
+        ['ownedWeaponTypeIds', 'ownedWeaponTypeIds'], ['ownedArmorTypeIds', 'ownedArmorTypeIds'],
+        ['ownedAdditionalArmorTypeIds', 'ownedAdditionalArmorTypeIds'], ['ownedItemTypeIds', 'ownedItemTypeIds'],
+      ]) {
+        if (Array.isArray(loadout?.[loadoutField])) unit[unitField] = [...loadout[loadoutField]];
+      }
       unit.canFly = baseParameters.canFly ?? false;
       unit.spriteWidth = baseParameters.spriteWidth ?? unit.spriteWidth ?? TILE_SIZE;
       unit.spriteHeight = baseParameters.spriteHeight ?? unit.spriteHeight ?? TILE_SIZE;
       unit.weaponTypeId = loadout?.weaponTypeId ?? getDefaultWeaponType(unit);
       unit.armorTypeId = loadout?.armorTypeId ?? unit.armorTypeId ?? '';
-      unit.itemTypeId = loadout?.itemTypeId ?? '';
+      if (!Array.isArray(unit.itemTypeIds)) unit.itemTypeIds = loadout?.itemTypeId ? [loadout.itemTypeId, ''] : [];
+      unit.itemTypeId = unit.itemTypeIds.find(Boolean) ?? loadout?.itemTypeId ?? '';
       const item = unit.itemTypeId ? itemParameters.get(unit.itemTypeId) : null;
       if (unit.itemTypeId && !item) throw new Error(`Param_table.txt に ${unit.itemTypeId} の定義がありません。`);
       unit.itemUsesRemaining = item?.uses ?? 0;
       unit.itemUsed = false;
+      const additionalArmorCorrection = (unit.additionalArmorIds ?? []).reduce((total, armorId) =>
+        total + Number(armorParameters.get(armorId)?.armorCorrection ?? 0), 0);
+      unit.armorCorrection = Number(armorParameters.get(unit.armorTypeId)?.armorCorrection ?? 0) + additionalArmorCorrection;
       const weapon = weaponParameters.get(unit.weaponTypeId);
       if (!weapon) throw new Error(`Param_table.txt に ${unit.weaponTypeId} の定義がありません。`);
       unit.attackRange = weapon.attackRange ?? unit.attackRange;
       unit.minAttackRange = weapon.minAttackRange ?? 1;
       unit.attackPower = weapon.attackPower ?? unit.attackPower;
       unit.weaponAccuracy = weapon.accuracy;
+      applyCustomProgressToUnit(unit);
       unit.x = position.x;
       unit.y = position.y;
       unit.imageFile = loadout?.imageFile ?? fallbackImageFile;
@@ -2763,7 +3706,14 @@
       updatedPlayerRoster.set(normalizeUnitId(unit.id), record);
     }
     for (const [id, loadout] of stagePlayerLoadouts) {
-      updatedPlayerRoster.set(id, { ...updatedPlayerRoster.get(id), id, side: 'player', ...loadout });
+      const existing = updatedPlayerRoster.get(id) ?? {};
+      updatedPlayerRoster.set(id, {
+        ...loadout,
+        ...existing,
+        id,
+        side: 'player',
+        imageFile: loadout.imageFile ?? existing.imageFile,
+      });
     }
     playerRoster = [...updatedPlayerRoster.values()];
     await Promise.all([...units, ...obstacles].map((entity) => waitForImage(entity.image)));
@@ -2815,6 +3765,8 @@
     const units = new Map();
     const npcs = new Map();
     const weapons = new Map();
+    const weaponOwners = new Map();
+    const growthCosts = new Map();
     const armors = new Map();
     const items = new Map();
     const unitFields = new Map([
@@ -2823,23 +3775,69 @@
       ['\u98db\u884c', 'canFly'],
     ]);
     const weaponFields = new Map([
-      ['\u5c04\u7a0b', 'attackRange'], ['\u30c0\u30e1\u30fc\u30b8', 'attackPower'], ['\u547d\u4e2d\u7387', 'accuracy'],
-      ['SE', 'se'], ['HIT', 'hitEffect'],
+      ['\u5c04\u7a0b', 'attackRange'], ['\u30c0\u30e1\u30fc\u30b8', 'attackPower'], ['\u547d\u4e2d\u7387', 'accuracy'], ['重量', 'weight'],
+      ['SE', 'se'], ['HIT', 'hitEffect'], ['価格', 'price'],
     ]);
-    const armorFields = new Map([['\u88c5\u7532\u88dc\u6b63', 'armorCorrection']]);
-    const itemFields = new Map([['効果', 'effect'], ['使用回数', 'uses']]);
+    const armorFields = new Map([['\u88c5\u7532\u88dc\u6b63', 'armorCorrection'], ['重量', 'weight'], ['価格', 'price']]);
+    const itemFields = new Map([['効果', 'effect'], ['使用回数', 'uses'], ['重量', 'weight'], ['価格', 'price']]);
     let section = '';
     let currentType = null;
     let currentFields = null;
+    let currentWeaponOwner = '';
+    let currentGrowthId = '';
     for (const rawLine of source.replace(/\r/g, '').split('\n')) {
-      const line = rawLine.replace(/\/\/.*$/, '').normalize('NFKC').trim();
+      const line = rawLine.replace(/\/\/.*$/, '').normalize('NFKC').trim().replace(/^#+\s*/, '').trim();
       if (!line) continue;
+
+      if (line === 'PC_GLOW') {
+        section = 'PC_GLOW';
+        currentType = null;
+        currentFields = null;
+        currentWeaponOwner = '';
+        currentGrowthId = '';
+        continue;
+      }
 
       if (['PC', 'EN', 'NPC', '\u30a6\u30a7\u30dd\u30f3', '\u30a2\u30fc\u30de\u30fc', '\u7279\u6b8a\u88c5\u5099'].includes(line)) {
         section = line;
         currentType = null;
         currentFields = null;
+        currentWeaponOwner = '';
+        currentGrowthId = '';
         continue;
+      }
+
+      if (section === 'PC_GLOW') {
+        const growthUnitMatch = line.match(/^(PC\d+)$/i);
+        if (growthUnitMatch) {
+          currentGrowthId = growthUnitMatch[1].toUpperCase();
+          if (growthCosts.has(currentGrowthId)) throw new Error(`Param_table.txt のPC_GLOWに ${currentGrowthId} が重複しています。`);
+          growthCosts.set(currentGrowthId, new Map());
+          continue;
+        }
+        const growthMatch = line.match(/^([^:：]+)\s*[:：]\s*(.*)$/);
+        if (growthMatch && currentGrowthId) {
+          const fieldAliases = new Map([['HP', 'HP'], ['移動力', '移動力'], ['回避', '回避'], ['命中補正', '命中補正'], ['力', '力']]);
+          const fieldName = fieldAliases.get(growthMatch[1].trim());
+          if (fieldName) {
+            const values = growthMatch[2].split(',').map((value) => value.trim());
+            if (values.at(-1) === '') values.pop();
+            if (!values.length || values.some((value) => !/^\d+$/.test(value))) {
+              throw new Error(`Param_table.txt のPC_GLOW ${currentGrowthId} ${fieldName}のポイント指定が不正です。`);
+            }
+            if (growthCosts.get(currentGrowthId).has(fieldName)) throw new Error(`Param_table.txt のPC_GLOW ${currentGrowthId} ${fieldName}が重複しています。`);
+            growthCosts.get(currentGrowthId).set(fieldName, values.map(Number));
+          }
+        }
+        continue;
+      }
+
+      if (section === '\u30a6\u30a7\u30dd\u30f3') {
+        const ownerMatch = line.match(/^(PC\d+|Robot)\u7528$/i);
+        if (ownerMatch) {
+          currentWeaponOwner = ownerMatch[1].toUpperCase();
+          continue;
+        }
       }
 
       const typeMatch = line.match(/^(Type_(PC|EN|NPC|WEP|ARM|ITEM)_[\w-]+)$/i);
@@ -2861,6 +3859,9 @@
         if (table.has(typeId)) throw new Error(`Param_table.txt のタイプIDが重複しています: ${typeId}`);
         currentType = {};
         table.set(typeId, currentType);
+        if (isWeaponType && currentWeaponOwner) {
+          weaponOwners.set(typeId, currentWeaponOwner);
+        }
         currentFields = isUnitType || isNpcType ? unitFields : isWeaponType ? weaponFields : isArmorType ? armorFields : itemFields;
         continue;
       }
@@ -2885,6 +3886,14 @@
       const outputField = currentFields?.get(fieldName);
       if (!outputField) continue;
       if (outputField === 'se' || outputField === 'hitEffect' || outputField === 'effect') currentType[outputField] = value;
+      else if (outputField === 'price') {
+        const normalizedPrice = value.normalize('NFKC').trim();
+        if (/^[ー―—-]$/.test(normalizedPrice)) currentType.price = null;
+        else {
+          const numericPrice = Number(normalizedPrice.replace(/,/g, ''));
+          if (Number.isFinite(numericPrice) && numericPrice >= 0) currentType.price = numericPrice;
+        }
+      }
       else if (outputField === 'canFly') {
         const normalizedValue = value.normalize('NFKC').toUpperCase();
         if (['ON', 'TRUE', '1', '\u6709'].includes(normalizedValue)) currentType.canFly = true;
@@ -2913,7 +3922,7 @@
       const hpEffect = parameters.effect?.match(/^HP\s*\+\s*(\d+)$/i);
       if (hpEffect) parameters.hpRestore = Number(hpEffect[1]);
     }
-    return { units, npcs, weapons, armors, items };
+    return { units, npcs, weapons, weaponOwners, growthCosts, armors, items };
   }
 
   function tryExtractEventBlock(source, blockName) {
@@ -2976,7 +3985,7 @@
     return loadouts;
   }
 
-  function validateUnitLoadouts(loadouts, blockName) {
+  function validateUnitLoadouts(loadouts, blockName, weaponOwners = new Map()) {
     for (const [id, loadout] of loadouts) {
       const faction = id.startsWith('PC') ? 'PC' : 'EN';
       if (!loadout.imageFile) throw new Error(`${blockName}: ${id} に画像ファイル（例: ${id}s.png）がありません。`);
@@ -2987,6 +3996,10 @@
       if (!loadout.weaponTypeId) throw new Error(`${blockName}: ${id} に武器パラメータ Type_WEP_*** がありません。`);
       if (!weaponParameters.has(loadout.weaponTypeId)) {
         throw new Error(`${blockName}: ${id} が参照する ${loadout.weaponTypeId} は Data/Param_table.txt にありません。`);
+      }
+      const weaponOwner = weaponOwners.get(loadout.weaponTypeId);
+      if (faction === 'PC' && weaponOwner && weaponOwner !== id) {
+        throw new Error(`${blockName}: ${id} に設定された ${loadout.weaponTypeId} は ${weaponOwner} 用です。`);
       }
       if (loadout.armorTypeId && !armorParameters.has(loadout.armorTypeId)) {
         throw new Error(`${blockName}: ${id} が参照する ${loadout.armorTypeId} は Data/Param_table.txt にありません。`);
@@ -3126,8 +4139,8 @@
 
   function openSaveSlotList(mode) {
     saveSlotMode = mode;
-    saveSlotTitle.textContent = mode === 'save' ? 'セーブ箇所一覧' : 'ロード箇所一覧';
-    saveSlotStatus.textContent = mode === 'save' ? '枠を選ぶとセーブデータを記録します。' : '読み込むデータを選択してください。';
+    saveSlotDeletionMode = false;
+    updateSaveSlotModeDisplay();
     renderSaveSlots();
     emptyCommand.hidden = true;
     saveSlotDialog.hidden = false;
@@ -3173,11 +4186,46 @@
     }
   }
 
+  function deleteSaveGame(slotIndex) {
+    if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= 10) return false;
+    const indexes = readSaveIndexes();
+    const contents = readSaveContents();
+    indexes[slotIndex] = null;
+    contents[slotIndex] = null;
+    try {
+      localStorage.setItem(SAVE_DATA_STORAGE_KEY, JSON.stringify(contents));
+      localStorage.setItem(SAVE_INDEX_STORAGE_KEY, JSON.stringify(indexes));
+      return true;
+    } catch (error) {
+      console.warn('セーブデータを削除できませんでした。', error);
+      return false;
+    }
+  }
+
+  function updateSaveSlotModeDisplay() {
+    saveSlotDialog.classList.toggle('delete-mode', saveSlotDeletionMode);
+    if (saveSlotDeletionMode) {
+      saveSlotTitle.textContent = 'セーブデータ削除モード';
+      saveSlotStatus.textContent = '削除するデータを選択してください。Ctrl+Qで通常モードに戻ります。';
+    } else {
+      saveSlotTitle.textContent = saveSlotMode === 'save' ? 'セーブ箇所一覧' : 'ロード箇所一覧';
+      saveSlotStatus.textContent = saveSlotMode === 'save'
+        ? '枠を選ぶとセーブデータを記録します。Ctrl+Qで削除モードに切り替えます。'
+        : '読み込むデータを選択してください。Ctrl+Qで削除モードに切り替えます。';
+    }
+  }
+
   function serializeEntity(entity) {
     const record = Object.fromEntries(Object.entries(entity).filter(([key, value]) =>
       key !== 'image' && (value === null || ['string', 'number', 'boolean'].includes(typeof value))
     ));
     if (entity.movementGoal) record.movementGoal = { ...entity.movementGoal };
+    for (const key of [
+      'customProgress', 'additionalArmorIds', 'itemTypeIds', 'ownedWeaponTypeIds', 'ownedArmorTypeIds',
+      'ownedAdditionalArmorTypeIds', 'ownedItemTypeIds',
+    ]) {
+      if (entity[key] !== undefined) record[key] = JSON.parse(JSON.stringify(entity[key]));
+    }
     return record;
   }
 
@@ -3189,6 +4237,7 @@
         playerRoster: playerRoster.map((unit) => ({ ...unit })),
         flags: [...eventFlags],
         customPoints,
+        customFunds,
         stageNo: currentStageId,
         eventNo: currentStageId,
       },
@@ -3202,6 +4251,8 @@
         impassableTiles: [...impassableTiles],
         lineOfSightBlockedTiles: [...lineOfSightBlockedTiles],
         phase: currentSide,
+        fundsEarned: battleFundsEarned,
+        stageClearConfirmed: battleStageClearConfirmed,
         turnCounts: { ...sideTurnCounts },
         completedEvents: [...completedBattleEvents],
         cursor: { ...cursor },
@@ -3280,6 +4331,9 @@
       for (const eventName of snapshot.battle.completedEvents ?? []) completedBattleEvents.add(eventName);
       playerRoster = snapshot.common.playerRoster ?? [];
       customPoints = Number.isFinite(snapshot.common.customPoints) ? snapshot.common.customPoints : 0;
+      customFunds = Number.isFinite(snapshot.common.customFunds) ? snapshot.common.customFunds : 0;
+      battleFundsEarned = Number.isFinite(snapshot.battle.fundsEarned) ? snapshot.battle.fundsEarned : 0;
+      battleStageClearConfirmed = Boolean(snapshot.battle.stageClearConfirmed);
       currentSide = snapshot.battle.phase === 'enemy' ? 'enemy' : 'player';
       sideTurnCounts.player = Math.max(1, Number(snapshot.battle.turnCounts?.player) || 1);
       sideTurnCounts.enemy = Math.max(1, Number(snapshot.battle.turnCounts?.enemy) || 1);
@@ -3374,7 +4428,7 @@
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.slotIndex = String(index - 1);
-      button.disabled = saveSlotMode === 'load' && !snapshot;
+      button.disabled = (saveSlotMode === 'load' || saveSlotDeletionMode) && !snapshot;
       if (record) {
         const stage = document.createElement('strong');
         stage.textContent = `【データ${toFullWidthNumber(String(index).padStart(2, '0'))}】`;

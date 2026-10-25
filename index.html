@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Robot＿SLG（仮）</title>
-    <link rel="stylesheet" href="style.css?v=20261023-cursor-position">
+    <link rel="stylesheet" href="style.css?v=20261024-custom-tab-mask">
   </head>
   <body>
     <button id="audio-start-screen" class="audio-start-screen" type="button">Please click to Game Start</button>
@@ -23,9 +23,9 @@
         <h2 id="stage-debug-title">ステージ選択</h2>
         <p>マップ配置を確認するステージを選択</p>
         <div class="stage-debug-options">
-          <button type="button" data-stage-id="000">Battle_000</button>
           <button type="button" data-stage-id="001">Battle_001</button>
           <button type="button" data-stage-id="002">Battle_002</button>
+          <button type="button" data-stage-id="003">Battle_003</button>
         </div>
         <button type="button" data-open-custom-preview>改造画面サンプル</button>
         <p id="stage-debug-status" aria-live="polite"></p>
@@ -50,22 +50,36 @@
       <div class="custom-panel">
         <header class="custom-header">
           <h1>ユニット改造</h1>
-          <div class="custom-points"><span>成長ポイント <strong id="custom-growth-points">100</strong></span><span>軍資金 <strong id="custom-funds">1000</strong></span></div>
+          <div class="custom-points"><span>成長ポイント <strong id="custom-growth-points">0</strong></span><span>軍資金 <strong id="custom-funds">0</strong></span></div>
         </header>
+        <section id="custom-debug-panel" class="custom-debug-panel" aria-label="デバッグ資源調整" hidden>
+          <div class="custom-debug-heading"><strong>デバッグ調整</strong><label>増減量 <input id="custom-debug-amount" type="number" min="1" step="1" value="10"></label></div>
+          <div class="custom-debug-resource"><span>成長ポイント</span><button type="button" data-debug-resource="growth" data-debug-sign="-">－</button><button type="button" data-debug-resource="growth" data-debug-sign="+">＋</button></div>
+          <div class="custom-debug-resource"><span>軍資金</span><button type="button" data-debug-resource="funds" data-debug-sign="-">－</button><button type="button" data-debug-resource="funds" data-debug-sign="+">＋</button></div>
+          <small>Ctrl＋Qで閉じる</small>
+        </section>
         <div id="custom-character-tabs" class="custom-character-tabs" role="tablist" aria-label="キャラクター"></div>
         <div id="custom-card" class="custom-card">
           <div class="custom-row custom-name-row"><span class="custom-label">名前</span><strong id="custom-character-name">ヒロイン</strong><span></span></div>
           <div id="custom-stat-rows"></div>
           <div id="custom-equipment-rows"></div>
         </div>
-        <footer class="custom-footer"><button id="custom-purchase" type="button">装備購入</button><button id="custom-close" type="button">戻る</button></footer>
+        <footer class="custom-footer"><button id="custom-close" type="button">セーブして次へ</button></footer>
       </div>
+      <dialog id="custom-purchase-dialog" class="custom-purchase-dialog" aria-labelledby="custom-purchase-message">
+        <p id="custom-purchase-message"></p>
+        <div class="custom-purchase-actions">
+          <button type="button" data-purchase-confirm>はい</button>
+          <button type="button" data-purchase-cancel>キャンセル</button>
+          <button type="button" data-purchase-close hidden>閉じる</button>
+        </div>
+      </dialog>
     </section>
     <main class="game-shell" hidden>
       <header class="game-header">
         <div>
           <p class="eyebrow">ROBOT SLG / PROTOTYPE</p>
-      <h1>Robot＿SLG（仮）</h1>
+      <h1 id="stage-title">ステージ　０１　窮地</h1>
         </div>
         <p class="help">クリック / Space・Enter・X：決定　Esc・Z：キャンセル</p>
       </header>
@@ -182,6 +196,6 @@
         <button type="button" data-action="close-game-rules">閉じる</button>
       </div>
     </section>
-    <script src="game.js?v=20261023-cursor-position"></script>
+    <script src="game.js?v=20261024-custom-tab-portraits"></script>
   </body>
 </html>
