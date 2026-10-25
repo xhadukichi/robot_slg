@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Robot＿SLG（仮）</title>
-    <link rel="stylesheet" href="style.css?v=20261024-custom-tab-mask">
+    <link rel="stylesheet" href="style.css?v=20261025-stage4-map-preview">
   </head>
   <body>
     <button id="audio-start-screen" class="audio-start-screen" type="button">Please click to Game Start</button>
@@ -20,15 +20,25 @@
         </div>
       </div>
       <section id="stage-debug-menu" class="stage-debug-menu" role="dialog" aria-modal="true" aria-labelledby="stage-debug-title" hidden>
-        <h2 id="stage-debug-title">ステージ選択</h2>
-        <p>マップ配置を確認するステージを選択</p>
-        <div class="stage-debug-options">
-          <button type="button" data-stage-id="001">Battle_001</button>
-          <button type="button" data-stage-id="002">Battle_002</button>
-          <button type="button" data-stage-id="003">Battle_003</button>
+        <h2 id="stage-debug-title">デバッグモード</h2>
+        <div id="stage-debug-main">
+          <p>シナリオを選ぶか、マップ配置を確認</p>
+          <div class="stage-debug-options">
+            <button type="button" data-open-scenario-jump>シナリオジャンプ</button>
+            <button type="button" data-stage-id="001">Battle_001 配置確認</button>
+            <button type="button" data-stage-id="002">Battle_002 配置確認</button>
+            <button type="button" data-stage-id="003">Battle_003 配置確認</button>
+            <button type="button" data-stage-id="004">Battle_004 配置確認</button>
+          </div>
+          <button type="button" data-open-custom-preview>改造画面サンプル</button>
+          <p id="stage-debug-status" aria-live="polite"></p>
         </div>
-        <button type="button" data-open-custom-preview>改造画面サンプル</button>
-        <p id="stage-debug-status" aria-live="polite"></p>
+        <div id="scenario-jump-menu" hidden>
+          <p>開始するステージを選択</p>
+          <div id="scenario-jump-options" class="stage-debug-options"></div>
+          <p id="scenario-jump-status" aria-live="polite"></p>
+          <button type="button" data-scenario-jump-back>戻る</button>
+        </div>
         <button type="button" data-stage-debug-close>閉じる（Ctrl+Q）</button>
       </section>
     </section>
@@ -196,6 +206,6 @@
         <button type="button" data-action="close-game-rules">閉じる</button>
       </div>
     </section>
-    <script src="game.js?v=20261024-custom-tab-portraits"></script>
+    <script src="game.js?v=20261025-stage4-map-preview"></script>
   </body>
 </html>

@@ -64,8 +64,12 @@
   const audioStartScreen = document.querySelector('#audio-start-screen');
   const titleScreen = document.querySelector('#title-screen');
   const stageDebugMenu = document.querySelector('#stage-debug-menu');
+  const stageDebugTitle = document.querySelector('#stage-debug-title');
+  const stageDebugMain = document.querySelector('#stage-debug-main');
   const stageDebugStatus = document.querySelector('#stage-debug-status');
-  const stageDebugButtons = [...stageDebugMenu.querySelectorAll('[data-stage-id]')];
+  const scenarioJumpMenu = document.querySelector('#scenario-jump-menu');
+  const scenarioJumpOptions = document.querySelector('#scenario-jump-options');
+  const scenarioJumpStatus = document.querySelector('#scenario-jump-status');
   const stagePreviewBanner = document.querySelector('#stage-preview-banner');
   const stagePreviewLabel = document.querySelector('#stage-preview-label');
   const stagePreviewExit = document.querySelector('#stage-preview-exit');
@@ -113,6 +117,8 @@
   let titleOpening = false;
   let titleIntroComplete = false;
   let stageDebugSelection = 0;
+  let scenarioJumpStages = [];
+  let scenarioJumpMenuOpen = false;
   let stagePreviewMode = false;
   let stagePreviewPreviousStageId = STAGE_ID;
   let stagePreviewPreviousRoster = [];
@@ -144,7 +150,11 @@
   let battleDefeatEvents = new Map();
   let battleObjectDefeatEvent = null;
   let battleEndEvent = null;
+  let battleTimeEvents = new Map();
   let battleMovementEvents = new Map();
+  let battleGroupMovementEvents = [];
+  let battleLabels = new Map();
+  const battleCounters = new Map();
   let npcDefinitions = new Map();
   let enemyReinforcementDefinitions = new Map();
   const eventFlags = new Set();
@@ -351,6 +361,7 @@
     '8,13', '12,13',
   ]);
   const lineOfSightBlockedTiles = new Set();
+  const terrainTypesByTile = new Map();
   let currentSide = 'player';
   const sideTurnCounts = { player: 1, enemy: 1 };
   let selectedUnit = null;
@@ -1265,6 +1276,20 @@
       showCustomScreen(true);
       return;
     }
+    if (event.target.closest('[data-open-scenario-jump]')) {
+      void openScenarioJumpMenu();
+      return;
+    }
+    if (event.target.closest('[data-scenario-jump-back]')) {
+      closeScenarioJumpMenu();
+      return;
+    }
+    const scenarioStageButton = event.target.closest('[data-scenario-stage-index]');
+    if (scenarioStageButton) {
+      const stage = scenarioJumpStages[Number(scenarioStageButton.dataset.scenarioStageIndex)];
+      if (stage?.available) void startDebugScenarioStage(stage);
+      return;
+    }
     const stageButton = event.target.closest('[data-stage-id]');
     if (stageButton) {
       openStagePreview(stageButton.dataset.stageId);
@@ -1328,16 +1353,19 @@
       return;
     }
     if (!stageDebugMenu.hidden) {
+      const buttons = getActiveStageDebugButtons();
       if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        if (!buttons.length) return;
         event.preventDefault();
-        stageDebugSelection = (stageDebugSelection + (event.key === 'ArrowDown' ? 1 : -1) + stageDebugButtons.length) % stageDebugButtons.length;
+        stageDebugSelection = (stageDebugSelection + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
         updateStageDebugSelection();
       } else if (event.key === 'Escape') {
         event.preventDefault();
-        toggleStageDebugMenu(false);
+        if (scenarioJumpMenuOpen) closeScenarioJumpMenu();
+        else toggleStageDebugMenu(false);
       } else if (event.key === 'Enter' || event.key === ' ' || event.key.toLowerCase() === 'x') {
         event.preventDefault();
-        stageDebugButtons[stageDebugSelection]?.click();
+        buttons[stageDebugSelection]?.click();
       }
       return;
     }
@@ -1444,10 +1472,17 @@
   }
 
   function updateStageDebugSelection() {
-    stageDebugButtons.forEach((button, index) => {
+    const buttons = getActiveStageDebugButtons();
+    stageDebugSelection = Math.min(stageDebugSelection, Math.max(0, buttons.length - 1));
+    buttons.forEach((button, index) => {
       button.classList.toggle('selected', index === stageDebugSelection);
       button.setAttribute('aria-current', index === stageDebugSelection ? 'true' : 'false');
     });
+  }
+
+  function getActiveStageDebugButtons() {
+    const page = scenarioJumpMenuOpen ? scenarioJumpMenu : stageDebugMain;
+    return [...page.querySelectorAll('button:not(:disabled)')];
   }
 
   function toggleStageDebugMenu(forceOpen = stageDebugMenu.hidden) {
@@ -1455,12 +1490,119 @@
     stageDebugMenu.hidden = !open;
     stageDebugStatus.textContent = '';
     if (open) {
+      closeScenarioJumpMenu();
       stageDebugSelection = 0;
       updateStageDebugSelection();
-      stageDebugButtons[0]?.focus();
+      getActiveStageDebugButtons()[0]?.focus();
     } else {
       titleOptions[titleSelection]?.focus();
     }
+  }
+
+  async function openScenarioJumpMenu() {
+    scenarioJumpMenuOpen = true;
+    stageDebugMain.hidden = true;
+    scenarioJumpMenu.hidden = false;
+    stageDebugTitle.textContent = 'シナリオジャンプ';
+    scenarioJumpStatus.textContent = '読み込み中…';
+    scenarioJumpOptions.replaceChildren();
+    stageDebugSelection = 0;
+    updateStageDebugSelection();
+    try {
+      const source = await loadEventScript('Event/Debug_event.txt');
+      scenarioJumpStages = parseDebugScenarioStages(source);
+      await Promise.all(scenarioJumpStages.map(async (stage) => {
+        try {
+          await loadEventScript(`Event/Battle_${stage.stageId}.txt`);
+          stage.available = true;
+        } catch {
+          stage.available = false;
+        }
+      }));
+      scenarioJumpOptions.replaceChildren(...scenarioJumpStages.map((stage, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.scenarioStageIndex = String(index);
+        button.disabled = !stage.available;
+        button.textContent = stage.available
+          ? `${stage.name} → Battle_${stage.stageId}`
+          : `${stage.name} → Battle_${stage.stageId}（未作成）`;
+        return button;
+      }));
+      const unavailableStages = scenarioJumpStages.filter((stage) => !stage.available);
+      scenarioJumpStatus.textContent = unavailableStages.length
+        ? `Battleファイルがないステージは選択できません：${unavailableStages.map((stage) => stage.name).join('、')}`
+        : '';
+      updateStageDebugSelection();
+      getActiveStageDebugButtons()[0]?.focus();
+    } catch (error) {
+      scenarioJumpStages = [];
+      scenarioJumpStatus.textContent = `Debug_event.txt を読み込めませんでした。${error.message || error}`;
+      stageDebugSelection = 0;
+      updateStageDebugSelection();
+      getActiveStageDebugButtons()[0]?.focus();
+    }
+  }
+
+  function closeScenarioJumpMenu() {
+    scenarioJumpMenuOpen = false;
+    scenarioJumpMenu.hidden = true;
+    stageDebugMain.hidden = false;
+    stageDebugTitle.textContent = 'デバッグモード';
+    scenarioJumpStatus.textContent = '';
+    stageDebugSelection = 0;
+    if (!stageDebugMenu.hidden) {
+      updateStageDebugSelection();
+      getActiveStageDebugButtons()[0]?.focus();
+    }
+  }
+
+  function parseDebugScenarioStages(source) {
+    const headers = source.replace(/\r/g, '').split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /^ステージ\s*\d+$/i.test(normalizeBattleLine(line)));
+    const stages = headers.map((header) => {
+      const normalizedHeader = normalizeBattleLine(header);
+      const number = Number(normalizedHeader.match(/\d+/)?.[0]);
+      const blockLines = extractEventBlock(source, header);
+      const gotoLine = blockLines.map(normalizeBattleLine).find((line) => /^GOTO\s*:/i.test(line));
+      const gotoMatch = gotoLine?.match(/^GOTO\s*:\s*BATTLE_(\d+)$/i);
+      if (!Number.isInteger(number) || !gotoMatch) {
+        throw new Error(`${header} に「GOTO: Battle_***」がありません。`);
+      }
+      const loadouts = parseUnitLoadouts(blockLines.join('\n'), 'ADD_Param');
+      return {
+        name: header.trim(),
+        number,
+        stageId: gotoMatch[1].padStart(3, '0'),
+        playerLoadouts: [...loadouts],
+        available: false,
+      };
+    });
+    if (!stages.length) throw new Error('「ステージ１」などのシナリオがありません。');
+    return stages;
+  }
+
+  async function startDebugScenarioStage(stage) {
+    if (titleTransitioning || !stage?.available) return;
+    titleTransitioning = true;
+    stageDebugMenu.hidden = true;
+    titleScreen.classList.add('fade-out');
+    fadeOutBgm();
+    await wait(700);
+    titleScreen.hidden = true;
+    introEvent.hidden = true;
+    isClearStory = false;
+    currentEventGoto = '';
+    currentStageId = stage.stageId;
+    customPoints = 0;
+    customFunds = 0;
+    playerRoster = stage.playerLoadouts.map(([id, loadout]) => ({ ...loadout, id, side: 'player' }));
+    completedBattleEvents.clear();
+    const initialFlags = Array.from({ length: stage.number - 1 }, (_, index) => `Battle_${String(index + 1).padStart(3, '0')}`);
+    if (stage.number > 1) initialFlags.push('物資購入');
+    await loadBattleOpening(stage.stageId, initialFlags);
+    titleTransitioning = false;
   }
 
   async function openStagePreview(stageId) {
@@ -2787,7 +2929,7 @@
     storyStart.disabled = false;
   }
 
-  async function loadBattleOpening(stageId = currentStageId) {
+  async function loadBattleOpening(stageId = currentStageId, initialEventFlags = []) {
     currentStageId = String(stageId).padStart(3, '0');
     battleFundsEarned = 0;
     battleStageClearConfirmed = false;
@@ -2809,7 +2951,9 @@
     rangeMode = null;
     turnConfirm.hidden = true;
     completedBattleEvents.clear();
+    battleCounters.clear();
     eventFlags.clear();
+    for (const flag of initialEventFlags) eventFlags.add(flag);
     currentSide = 'player';
     sideTurnCounts.player = 1;
     sideTurnCounts.enemy = 1;
@@ -2848,7 +2992,10 @@
     battleDefeatEvents = battleEvents.defeats;
     battleObjectDefeatEvent = battleEvents.objectDefeat;
     battleEndEvent = battleEvents.end;
+    battleTimeEvents = battleEvents.times;
     battleMovementEvents = battleEvents.movements;
+    battleGroupMovementEvents = battleEvents.groupMovements;
+    battleLabels = parseBattleLabels(battleScript);
     npcDefinitions = parseNpcDefinitions(battleScript);
   }
 
@@ -2951,18 +3098,26 @@
     const attacks = new Map();
     const defenses = new Map();
     const defeats = new Map();
+    const times = new Map();
     const movements = new Map();
+    const groupMovements = [];
     let objectDefeat = null;
     let end = null;
     const names = source.replace(/\r/g, '').split('\n')
       .map((line) => line.trim())
-      .filter((line) => /^(?:攻撃前|撃破|移動)[\t \u3000]+[\d０-９]+$/.test(line));
+      .filter((line) => /^(?:攻撃前|撃破|移動)[\t \u3000]+[\d０-９]+$/.test(line) || /^ターン[\t \u3000]+[\d０-９]+[\t \u3000]+(?:PC|EN)$/i.test(normalizeBattleLine(line)));
 
     for (const name of names) {
       const normalizedName = normalizeBattleLine(name);
       const lines = extractEventBlock(source, name);
       const messages = parseBattleMessageRecords(lines);
       const attackName = normalizedName.match(/^攻撃前\s+(\d+)$/);
+      const timeName = normalizedName.match(/^ターン\s+(\d+)\s+(PC|EN)$/i);
+      if (timeName) {
+        const side = timeName[2].toUpperCase() === 'PC' ? 'player' : 'enemy';
+        times.set(`${side}:${Number(timeName[1])}`, { name, lines });
+        continue;
+      }
       if (attackName) {
         const condition = lines.map(normalizeBattleLine).find((line) => /^(?:PC\d+\s+VS\s+EN|EN\s+VS\s+PC\d+)$/.test(line));
         const outgoing = condition?.match(/^PC(\d+)\s+VS\s+EN$/);
@@ -2978,9 +3133,13 @@
       const defeatName = normalizedName.match(/^撃破\s+(\d+)$/);
       const movementName = normalizedName.match(/^移動\s+(\d+)$/);
       if (movementName) {
-        const condition = lines.map(normalizeBattleLine).find((line) => /^(?:NPC|PC|EN)\d+\s*\(\d+\s*,\s*\d+\)\s*\(\d+\s*,\s*\d+\)$/.test(line));
+        const conditions = lines.map(normalizeBattleLine);
+        const condition = conditions.find((line) => /^(?:NPC|PC|EN)\d+\s*\(\d+\s*,\s*\d+\)\s*\(\d+\s*,\s*\d+\)$/.test(line));
         const match = condition?.match(/^((?:NPC|PC|EN)\d+)\s*\((\d+)\s*,\s*(\d+)\)\s*\((\d+)\s*,\s*(\d+)\)$/);
+        const groupCondition = conditions.find((line) => /^NPC\s*\(\d+\s*,\s*\d+\)\s*\(\d+\s*,\s*\d+\)$/.test(line));
+        const groupMatch = groupCondition?.match(/^NPC\s*\((\d+)\s*,\s*(\d+)\)\s*\((\d+)\s*,\s*(\d+)\)$/);
         if (match) movements.set(normalizeUnitId(match[1]), { name, lines, bounds: match.slice(2).map(Number) });
+        else if (groupMatch) groupMovements.push({ name, lines, bounds: groupMatch.slice(1).map(Number) });
       } else if (defeatName?.[1] === '100') {
         end = { name, lines };
       } else if (defeatName) {
@@ -2992,7 +3151,18 @@
       }
     }
 
-    return { attacks, defenses, defeats, movements, objectDefeat, end };
+    return { attacks, defenses, defeats, times, movements, groupMovements, objectDefeat, end };
+  }
+
+  function parseBattleLabels(source) {
+    const labels = new Map();
+    const names = source.replace(/\r/g, '').split('\n').map((line) => line.trim())
+      .filter((line) => /^ラベル[\t \u3000]+.+$/.test(line));
+    for (const name of names) {
+      const key = normalizeBattleLine(name).replace(/^ラベル\s+/, '').trim().toLowerCase();
+      labels.set(key, extractEventBlock(source, name));
+    }
+    return labels;
   }
 
   async function enterStage() {
@@ -3110,9 +3280,9 @@
     if (/^BGM\s+再生\s+\S+$/i.test(line)) return true;
     if (/^BGM\s+変更\s+\S+$/i.test(line)) return true;
     if (/^SE\s+再生\s+\S+$/i.test(line)) return true;
-    if (/^(?:援軍配置\s|カーソル\s|メッセージ消去$|ゲームオーバー$|ステージクリア$|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|GOTO(?:\s|:|：)|IF(?:\s|$))/.test(line)) return true;
-    return /^(?:IF\s+PC\d+|IF\s+座標\s+PC\d+|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
-      /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|軍資金\s*(?:\+\s*\d+|支払い)|成長ポイント\s*\+\s*\d+|フラグ\s+ON\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
+    if (/^(?:援軍配置\s|カーソル\s|メッセージ消去$|ゲームオーバー$|ステージクリア$|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|カウンタ\s|移動目標\s|退却\s|GOTO(?:\s|:|：)|IF(?:\s|$))/.test(line)) return true;
+    return /^(?:IF\s+PC\d+|IF\s+座標\s+PC\d+|IF\s+(?:フラグ|カウンタ)\s|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
+      /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|軍資金\s*(?:\+\s*\d+|支払い)|成長ポイント\s*\+\s*\d+|カウンタ\s+.+|移動目標\s+NPC\d+\s*\(\d+\s*,\s*\d+\)|退却\s+NPC\d+|フラグ\s+(?:ON|OFF)\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
   }
 
   function extractBattleBraceBlock(lines, startIndex) {
@@ -3151,9 +3321,11 @@
     const selectedLines = [];
     for (let index = 0; index < lines.length; index++) {
       const normalizedLine = normalizeBattleLine(lines[index]);
-      const aliveCondition = normalizedLine.match(/^IF\s+(PC\d+)$/i);
+      const aliveCondition = normalizedLine.match(/^IF\s+((?:PC|NPC|EN)\d+)$/i);
       const coordinateCondition = normalizedLine.match(/^IF\s+座標\s+(PC\d+)\s*\((\d+)\s*,\s*(\d+)\)\s*\((\d+)\s*,\s*(\d+)\)$/i);
-      if (!aliveCondition && !coordinateCondition) {
+      const flagCondition = normalizedLine.match(/^IF\s+フラグ\s+(.+)$/i);
+      const counterCondition = normalizedLine.match(/^IF\s+カウンタ\s+(.+?)\s*(=|==|>=|<=|>|<)\s*(\d+)$/i);
+      if (!aliveCondition && !coordinateCondition && !flagCondition && !counterCondition) {
         selectedLines.push(lines[index]);
         continue;
       }
@@ -3168,7 +3340,13 @@
       }
       const elseBlock = hasElse ? extractBattleBraceBlock(lines, elseIndex) : null;
       let conditionMet;
-      if (coordinateCondition) {
+      if (flagCondition) {
+        conditionMet = eventFlags.has(flagCondition[1].trim());
+      } else if (counterCondition) {
+        const value = battleCounters.get(counterCondition[1].trim()) ?? 0;
+        const target = Number(counterCondition[3]);
+        conditionMet = ({ '=': value === target, '==': value === target, '>=': value >= target, '<=': value <= target, '>': value > target, '<': value < target })[counterCondition[2]];
+      } else if (coordinateCondition) {
         const unit = units.find((candidate) => candidate.id === normalizeUnitId(coordinateCondition[1]));
         if (unit) {
           const x1 = Number(coordinateCondition[2]);
@@ -3217,7 +3395,8 @@
     }
   }
 
-  async function runBattleEndCommands(lines) {
+  async function runBattleEndCommands(lines, controlDepth = 0) {
+    if (controlDepth > 32) throw new Error('Battle event local GOTO depth exceeded.');
     const selectedLines = selectBattleIfBranches(lines);
     let pendingMessageLines = [];
     let reachedEpilogue = false;
@@ -3231,7 +3410,11 @@
       const line = normalizeBattleLine(rawLine);
       const reinforcement = line.match(/^援軍配置\s+((?:PC|NPC|EN)\d+)\s*:\s*\((\d+)\s*,\s*(\d+)\)$/i);
       const cursorCommand = line.match(/^カーソル\s*\((\d+)\s*,\s*(\d+)\)$/);
-      const gotoCommand = line.match(/^GOTO\s*:\s*(.+)$/i);
+      const gotoCommand = line.match(/^GOTO\s*[:：]\s*(.+)$/i);
+      const localGotoCommand = line.match(/^(?:GOTO|ＧＯＴＯ)\s+(.+)$/i);
+      const retreatCommand = line.match(/^退却\s+(NPC\d+)$/i);
+      const counterCommand = line.match(/^カウンタ\s+(.+?)\s*([+-])\s*(\d+)$/);
+      const movementGoalCommand = line.match(/^移動目標\s+(NPC\d+)\s*\((\d+)\s*,\s*(\d+)\)$/i);
       const gameOverCommand = line === 'ゲームオーバー';
       const clearCommand = line === 'ステージクリア';
       const bgmStopCommand = /^BGM\s+ストップ$/i.test(line);
@@ -3243,7 +3426,7 @@
       const battleFundsCommand = line.match(/^軍資金\s*\+\s*(\d+)$/);
       const payBattleFundsCommand = line === '軍資金 支払い';
       const growthPointsCommand = line.match(/^成長ポイント\s*\+\s*(\d+)$/);
-      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || flagCommand || battleFundsCommand || payBattleFundsCommand || growthPointsCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
+      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || localGotoCommand || retreatCommand || counterCommand || movementGoalCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || flagCommand || battleFundsCommand || payBattleFundsCommand || growthPointsCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
       if (!recognizedCommand) {
         pendingMessageLines.push(rawLine);
         continue;
@@ -3279,6 +3462,33 @@
         await followEventGoto(gotoCommand[1]);
         reachedEpilogue = true;
         break;
+      } else if (localGotoCommand) {
+        const label = battleLabels.get(localGotoCommand[1].trim().toLowerCase());
+        if (!label) throw new Error(`Unknown Battle label: ${localGotoCommand[1].trim()}`);
+        await runBattleEndCommands(label, controlDepth + 1);
+        reachedEpilogue = true;
+        break;
+      } else if (retreatCommand) {
+        const id = normalizeUnitId(retreatCommand[1]);
+        const index = units.findIndex((unit) => unit.id === id);
+        if (index >= 0) units.splice(index, 1);
+        draw();
+      } else if (counterCommand) {
+        const key = counterCommand[1].trim();
+        const current = battleCounters.get(key) ?? 0;
+        const delta = Number(counterCommand[3]) * (counterCommand[2] === '-' ? -1 : 1);
+        battleCounters.set(key, current + delta);
+      } else if (movementGoalCommand) {
+        const id = normalizeUnitId(movementGoalCommand[1]);
+        const unit = units.find((candidate) => candidate.id === id);
+        if (!unit || unit.side !== 'npc') {
+          console.warn(`移動目標のNPC ${id} はすでに戦場にいないため、目標変更をスキップしました。`);
+          continue;
+        }
+        const x = Number(movementGoalCommand[2]);
+        const y = Number(movementGoalCommand[3]);
+        if (x < 1 || x > MAP_WIDTH || y < 1 || y > MAP_HEIGHT) throw new Error(`移動目標 (${x},${y}) はマップ外です。`);
+        unit.movementGoal = { x: x - 1, y: y - 1 };
       } else if (reinforcement) {
         if (reinforcement[1].toUpperCase().startsWith('EN')) {
           await deployBattleEnemy(reinforcement[1], Number(reinforcement[2]), Number(reinforcement[3]));
@@ -3349,6 +3559,7 @@
       attackPower: 0,
       evasion: parameters.evasion ?? 0,
       hitBonus: parameters.hitBonus ?? 0,
+      passableTerrainTypes: [...(parameters.passableTerrainTypes ?? [])],
       moveUsed: true,
       attackUsed: true,
       ended: true,
@@ -3402,6 +3613,17 @@
   }
 
   async function runBattleMovementEvents() {
+    for (const event of battleGroupMovementEvents) {
+      if (completedBattleEvents.has(event.name)) continue;
+      const [x1, y1, x2, y2] = event.bounds;
+      const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+      const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+      const reached = units.some((unit) => unit.side === 'npc' && unit.x + 1 >= minX && unit.x + 1 <= maxX && unit.y + 1 >= minY && unit.y + 1 <= maxY);
+      if (!reached) continue;
+      completedBattleEvents.add(event.name);
+      const endedEvent = await playBattleScriptCommands(event.lines);
+      if (endedEvent || isGameOver || clearTransitioning) return;
+    }
     for (const [unitId, event] of battleMovementEvents) {
       const unit = units.find((candidate) => candidate.id === unitId);
       if (!unit || completedBattleEvents.has(event.name)) continue;
@@ -3411,9 +3633,17 @@
       if (mapX < Math.min(x1, x2) || mapX > Math.max(x1, x2) ||
           mapY < Math.min(y1, y2) || mapY > Math.max(y1, y2)) continue;
       completedBattleEvents.add(event.name);
-      await playBattleScriptCommands(event.lines);
-      if (isGameOver || clearTransitioning) return;
+      const endedEvent = await playBattleScriptCommands(event.lines);
+      if (endedEvent || isGameOver || clearTransitioning) return;
     }
+  }
+
+  async function runBattleTimeEvents() {
+    const event = battleTimeEvents.get(`${currentSide}:${sideTurnCounts[currentSide]}`);
+    if (!event || completedBattleEvents.has(event.name)) return false;
+    completedBattleEvents.add(event.name);
+    await playBattleScriptCommands(event.lines);
+    return true;
   }
 
   async function runBattleObjectDefeatEvent() {
@@ -3507,7 +3737,8 @@
     phaseBgmFiles = parsePhaseBgm(source);
     const setupLines = extractEventBlock(source, '初期配置');
     npcDefinitions = parseNpcDefinitions(source);
-    const npcMovementGoals = parseNpcMovementGoals(source);
+    // 初期配置の移動目標だけを適用する。イベント中の「移動目標」は後から更新する命令。
+    const npcMovementGoals = parseNpcMovementGoals(setupLines.join('\n'));
     const mapLine = setupLines.map((line) => line.normalize('NFKC').trim()).find((line) => /^MAP\s*:/i.test(line));
     const mapConfig = mapLine?.match(/^MAP\s*:\s*(\S+)\s+(\d+)\s*\*\s*(\d+)$/i);
     if (!mapConfig) throw new Error('初期配置に「MAP:画像名 横*縦」を指定してください。');
@@ -3555,8 +3786,8 @@
     const coordinatePattern = /^\s*(PC\d+|EN\d+|OBJ\d+)\s*:\s*(.+?)(?:\s*:\s*(type_[\w-]+))?\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*(?::\s*HP\s*(\d+)|\s+HP\s*(\d+))?\s*$/i;
     units.splice(0, units.length, ...unitTemplates.map((unit) => ({ ...unit, image: new Image() })));
     const playerTemplate = unitTemplates.find((unit) => unit.side === 'player');
-    if (stagePlayerLoadouts.size && !playerTemplate) throw new Error('プレイヤーユニットの初期テンプレートがありません。');
-    for (const id of stagePlayerLoadouts.keys()) {
+    if (carriedPlayerLoadouts.size && !playerTemplate) throw new Error('プレイヤーユニットの初期テンプレートがありません。');
+    for (const id of carriedPlayerLoadouts.keys()) {
       if (units.some((unit) => unit.id === id)) continue;
       units.push({ ...playerTemplate, id, image: new Image() });
     }
@@ -3593,6 +3824,7 @@
         if (Array.isArray(loadout?.[loadoutField])) unit[unitField] = [...loadout[loadoutField]];
       }
       unit.canFly = baseParameters.canFly ?? false;
+      unit.passableTerrainTypes = [...(baseParameters.passableTerrainTypes ?? [])];
       unit.spriteWidth = baseParameters.spriteWidth ?? unit.spriteWidth ?? TILE_SIZE;
       unit.spriteHeight = baseParameters.spriteHeight ?? unit.spriteHeight ?? TILE_SIZE;
       unit.weaponTypeId = loadout?.weaponTypeId ?? getDefaultWeaponType(unit);
@@ -3720,22 +3952,28 @@
 
     impassableTiles.clear();
     lineOfSightBlockedTiles.clear();
+    terrainTypesByTile.clear();
     let readingTerrain = false;
     let terrainBlocksLineOfSight = false;
+    let terrainType = '';
     for (const line of setupLines) {
       const trimmed = normalizeBattleLine(line.replace(/\/\/.*$/, ''));
-      if (trimmed === 'Type_A') { readingTerrain = true; terrainBlocksLineOfSight = false; continue; }
-      if (trimmed === 'Type_B') { readingTerrain = true; terrainBlocksLineOfSight = true; continue; }
-      if (trimmed === '岩' || trimmed === '壁') { readingTerrain = true; terrainBlocksLineOfSight = true; }
+      if (trimmed === 'Type_A') { readingTerrain = true; terrainBlocksLineOfSight = false; terrainType = trimmed; continue; }
+      if (trimmed === 'Type_B') { readingTerrain = true; terrainBlocksLineOfSight = true; terrainType = trimmed; continue; }
+      if (trimmed === '岩' || trimmed === '壁') { readingTerrain = true; terrainBlocksLineOfSight = true; terrainType = trimmed; }
       else if (trimmed === '湖' || trimmed === '木' || trimmed === '壊れ壁') {
         readingTerrain = true;
         terrainBlocksLineOfSight = false;
+        terrainType = trimmed;
       }
       if (trimmed.startsWith('開始カーソル')) readingTerrain = false;
       if (!readingTerrain) continue;
       for (const match of line.matchAll(/[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]/g)) {
         const tile = `${Number(match[1]) - 1},${Number(match[2]) - 1}`;
         impassableTiles.add(tile);
+        const tileTypes = terrainTypesByTile.get(tile) ?? new Set();
+        if (terrainType) tileTypes.add(terrainType);
+        terrainTypesByTile.set(tile, tileTypes);
         if (terrainBlocksLineOfSight) lineOfSightBlockedTiles.add(tile);
       }
     }
@@ -3772,7 +4010,7 @@
     const unitFields = new Map([
       ['HP', 'hp'], ['\u79fb\u52d5\u529b', 'moveRange'], ['\u56de\u907f', 'evasion'],
       ['\u547d\u4e2d\u88dc\u6b63', 'hitBonus'], ['\u529b', 'strength'], ['\u30b5\u30a4\u30ba', 'size'],
-      ['\u98db\u884c', 'canFly'],
+      ['\u98db\u884c', 'canFly'], ['\u79fb\u52d5\u53ef\u80fd', 'passableTerrainTypes'],
     ]);
     const weaponFields = new Map([
       ['\u5c04\u7a0b', 'attackRange'], ['\u30c0\u30e1\u30fc\u30b8', 'attackPower'], ['\u547d\u4e2d\u7387', 'accuracy'], ['重量', 'weight'],
@@ -3898,6 +4136,9 @@
         const normalizedValue = value.normalize('NFKC').toUpperCase();
         if (['ON', 'TRUE', '1', '\u6709'].includes(normalizedValue)) currentType.canFly = true;
         else if (['OFF', 'FALSE', '0', '\u7121'].includes(normalizedValue)) currentType.canFly = false;
+      }
+      else if (outputField === 'passableTerrainTypes') {
+        currentType.passableTerrainTypes = value.normalize('NFKC').split(/[、,，]/).map((terrain) => terrain.trim()).filter(Boolean);
       }
       else if (outputField === 'attackRange') {
         const rangeMatch = value.match(/^(\d+)(?:\s*[~〜-]\s*(\d+))?$/);
@@ -4221,7 +4462,7 @@
     ));
     if (entity.movementGoal) record.movementGoal = { ...entity.movementGoal };
     for (const key of [
-      'customProgress', 'additionalArmorIds', 'itemTypeIds', 'ownedWeaponTypeIds', 'ownedArmorTypeIds',
+      'customProgress', 'additionalArmorIds', 'itemTypeIds', 'passableTerrainTypes', 'ownedWeaponTypeIds', 'ownedArmorTypeIds',
       'ownedAdditionalArmorTypeIds', 'ownedItemTypeIds',
     ]) {
       if (entity[key] !== undefined) record[key] = JSON.parse(JSON.stringify(entity[key]));
@@ -4255,6 +4496,7 @@
         stageClearConfirmed: battleStageClearConfirmed,
         turnCounts: { ...sideTurnCounts },
         completedEvents: [...completedBattleEvents],
+        counters: Object.fromEntries(battleCounters),
         cursor: { ...cursor },
         camera: { ...camera },
         bgm: { filename: currentBgm, time: loadedBgm === currentBgm ? bgmAudio.currentTime : 0 },
@@ -4328,7 +4570,9 @@
       eventFlags.clear();
       for (const flag of snapshot.common.flags ?? []) eventFlags.add(flag);
       completedBattleEvents.clear();
+      battleCounters.clear();
       for (const eventName of snapshot.battle.completedEvents ?? []) completedBattleEvents.add(eventName);
+      for (const [key, value] of Object.entries(snapshot.battle.counters ?? {})) battleCounters.set(key, Number(value) || 0);
       playerRoster = snapshot.common.playerRoster ?? [];
       customPoints = Number.isFinite(snapshot.common.customPoints) ? snapshot.common.customPoints : 0;
       customFunds = Number.isFinite(snapshot.common.customFunds) ? snapshot.common.customFunds : 0;
@@ -4516,6 +4760,7 @@
     unitStatus.hidden = true;
     emptyCommand.hidden = true;
     await wait(700);
+    await runBattleTimeEvents();
 
     for (const enemy of units.filter((unit) => unit.side === 'enemy' && !unit.ended)) {
       if (debugMode || isGameOver || currentSide !== 'enemy') break;
@@ -4609,9 +4854,19 @@
       if (!isGameOver) await wait(350);
     }
 
-    if (!debugMode && !isGameOver && currentSide === 'enemy') await runNpcMovementGoals();
+    if (!debugMode && !isGameOver && currentSide === 'enemy') {
+      try {
+        await runNpcMovementGoals();
+      } catch (error) {
+        console.error('NPC移動イベントでエラーが発生しました。', error);
+        showAttackMessage(`NPC移動イベントエラー: ${error.message || error}`, 15000);
+        enemyRangePreview = null;
+        draw();
+      }
+    }
 
-    if (!debugMode && !isGameOver && currentSide === 'enemy' && allCurrentUnitsEnded()) {
+    const remainingEnemyActions = units.some((unit) => unit.side === 'enemy' && !unit.ended);
+    if (!debugMode && !isGameOver && currentSide === 'enemy' && !remainingEnemyActions) {
       phaseAnnouncement.textContent = 'エネミーターン終了！';
       phaseAnnouncement.hidden = false;
       fadeOutBgm();
@@ -4632,6 +4887,7 @@
       updatePhaseLabel();
       announceCurrentTurn();
       playPhaseBgm();
+      await runBattleTimeEvents();
     }
 
     isEnemyAiRunning = false;
@@ -4647,6 +4903,10 @@
     const movers = units.filter((unit) => unit.side === 'npc' && unit.movementGoal);
     for (const npc of movers) {
       if (isGameOver || currentSide !== 'enemy') break;
+      if (!units.includes(npc)) continue;
+      await runBattleMovementEvents();
+      if (isGameOver || clearTransitioning || currentSide !== 'enemy') break;
+      if (!units.includes(npc)) continue;
       const goal = npc.movementGoal;
       if (unitOccupiesTile(npc, goal.x, goal.y)) continue;
       const path = getNpcGoalPath(npc, goal);
@@ -4660,22 +4920,25 @@
       if (safeStopIndex < 1) continue;
       movementPath.length = safeStopIndex + 1;
 
-      cursor.x = goal.x;
-      cursor.y = goal.y;
-      scrollToCursor();
-      await waitForCameraToStop();
       cursor.x = npc.x;
       cursor.y = npc.y;
+      scrollToCursor();
+      await waitForCameraToStop();
       enemyRangePreview = { unit: npc, mode: 'move' };
       draw();
       await wait(250);
       await new Promise((resolve) => animateUnitMove(npc, movementPath, resolve));
+      cursor.x = npc.x;
+      cursor.y = npc.y;
+      scrollToCursor();
+      await waitForCameraToStop();
       enemyRangePreview = null;
       draw();
       await wait(250);
+      await runBattleMovementEvents();
+      if (isGameOver || clearTransitioning || currentSide !== 'enemy') break;
     }
     enemyRangePreview = null;
-    await runBattleMovementEvents();
   }
 
   function getNpcGoalPath(unit, goal) {
@@ -4702,7 +4965,7 @@
         for (let tileY = y; tileY < y + footprint.height; tileY++) {
           for (let tileX = x; tileX < x + footprint.width; tileX++) {
             const tile = `${tileX},${tileY}`;
-            if (impassableTiles.has(tile) && (!unit.canFly || lineOfSightBlockedTiles.has(tile))) return true;
+            if (impassableTiles.has(tile) && !canUnitTraverseTerrain(unit, tile)) return true;
           }
         }
         const overlaps = (otherX, otherY, otherWidth, otherHeight) =>
@@ -4712,7 +4975,6 @@
             !(allowDestructibleObjects && obstacle.destructible))) return true;
         return units.some((other) => {
           if (other === unit) return false;
-          if (canPassThroughUnit(unit, other)) return false;
           const otherSize = getFootprintSize(other);
           return overlaps(other.x, other.y, otherSize.width, otherSize.height);
         });
@@ -4751,6 +5013,13 @@
         position.x < obstacle.x + 1 && position.x + footprint.width > obstacle.x &&
         position.y < obstacle.y + 1 && position.y + footprint.height > obstacle.y));
     return firstObjectStep > 0 ? plannedPath.slice(0, firstObjectStep) : [];
+  }
+
+  function canUnitTraverseTerrain(unit, tile) {
+    if (unit.canFly && !lineOfSightBlockedTiles.has(tile)) return true;
+    const allowedTypes = unit.passableTerrainTypes ?? [];
+    const tileTypes = terrainTypesByTile.get(tile);
+    return Boolean(tileTypes && [...tileTypes].some((terrainType) => allowedTypes.includes(terrainType)));
   }
 
   function findNearestOpponent(unit) {
@@ -5051,11 +5320,18 @@
         await shakeUnit(target);
         await animateHpCountdown(target, previousHp, target.hp);
         if (defeated) {
-          await runBattleDefeatEvent(target);
           const explosionDone = startExplosion(target);
-          units.splice(units.indexOf(target), 1);
           const deathSe = target.side === 'player' ? 'dead_pc.mp3' : 'dead_en.mp3';
-          await Promise.all([explosionDone, playSe(deathSe)]);
+          const deathSeDone = playSe(deathSe);
+          try {
+            await runBattleDefeatEvent(target);
+          } catch (error) {
+            console.error(`${target.id} の撃破イベントを実行できませんでした。`, error);
+          } finally {
+            const defeatedUnitIndex = units.indexOf(target);
+            if (defeatedUnitIndex >= 0) units.splice(defeatedUnitIndex, 1);
+            await Promise.all([explosionDone, deathSeDone]);
+          }
           await resolveBattleEndEvent();
         }
       } else {
@@ -5640,7 +5916,7 @@
       for (let tileX = x; tileX < x + width; tileX++) {
         // Flyers cross Type_A terrain, but Type_B terrain still blocks them.
         const tile = `${tileX},${tileY}`;
-        if (impassableTiles.has(tile) && (!unit.canFly || lineOfSightBlockedTiles.has(tile))) return true;
+        if (impassableTiles.has(tile) && !canUnitTraverseTerrain(unit, tile)) return true;
       }
     }
     const overlaps = (otherX, otherY, otherWidth, otherHeight) =>

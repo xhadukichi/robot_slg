@@ -93,6 +93,7 @@ body {
   text-align: center;
 }
 .stage-debug-menu[hidden] { display: none; }
+.stage-debug-menu [hidden] { display: none; }
 .stage-debug-menu h2 { margin: 0 0 8px; color: #f1d978; }
 .stage-debug-menu p { margin: 0 0 16px; color: #b8c3b9; font-size: 13px; }
 .stage-debug-options { display: grid; gap: 8px; margin-bottom: 14px; }

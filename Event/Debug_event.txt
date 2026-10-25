@@ -1,0 +1,102 @@
+
+Debug_event
+｛
+	ステージ１
+	｛
+		GOTO: Battle_001
+	｝
+	ステージ２
+	｛
+		ADD_Param
+		｛
+			PC01
+			｛
+				PC01s.png
+				Type_PC_001
+				Type_WEP_001
+				Type_ARM_001
+				Type_ITEM_001
+			｝
+		｝		
+		GOTO: Battle_002
+	｝
+	ステージ３
+	｛
+		ADD_Param
+		｛
+			PC01
+			｛
+				PC01s.png
+				Type_PC_001
+				Type_WEP_001
+				Type_ARM_001
+				Type_ITEM_001
+			｝
+			PC02
+			｛
+				PC02s.png
+				Type_PC_002
+				Type_WEP_006
+				Type_ARM_001
+				Type_ITEM_001
+			｝
+			PC03
+			｛
+				PC03s.png
+				Type_PC_003
+				Type_WEP_005
+				Type_ARM_001
+				Type_ITEM_001
+			｝
+		｝		
+		GOTO: Battle_003
+	｝
+	ステージ４
+	｛
+		ADD_Param
+		｛
+			PC01
+			｛
+				PC01s.png
+				Type_PC_001
+				Type_WEP_001
+				Type_ARM_001
+				Type_ITEM_001
+			｝
+			PC02
+			｛
+				PC02s.png
+				Type_PC_002
+				Type_WEP_006
+				Type_ARM_001
+				Type_ITEM_001
+			｝
+			PC03
+			｛
+				PC03s.png
+				Type_PC_003
+				Type_WEP_005
+				Type_ARM_001
+				Type_ITEM_001
+			｝
+			PC04
+			｛
+				PC04s.png
+				Type_PC_004
+				Type_WEP_003
+				Type_ARM_005
+				Type_ITEM_001
+			｝
+		｝		
+		GOTO: Battle_004
+	｝
+	ステージ５
+	｛
+		ADD_Param
+		｛
+		｝
+		GOTO: Battle_005
+	｝
+｝
+
+
