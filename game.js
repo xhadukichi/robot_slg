@@ -2853,7 +2853,7 @@
   }
 
   function resolveBustupSource(reference = '') {
-    const normalized = normalizeBattleLine(reference);
+    const normalized = String(reference ?? '').normalize('NFKC').trim();
     const unitMatch = normalized.match(/^PC(\d+)$/i);
     if (unitMatch) return `Unit/BU_PC${unitMatch[1].padStart(2, '0')}.png`;
     const graphicName = normalized.replace(/^Unit[\\/]/i, '');
