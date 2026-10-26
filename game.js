@@ -5,6 +5,7 @@
   const STAGE_ID = '001';
   let currentStageId = STAGE_ID;
   const SAVE_FORMAT_VERSION = 1;
+  const SAVE_SLOT_COUNT = 20;
   const SAVE_INDEX_STORAGE_KEY = 'robot-slg-save-index-v1';
   const SAVE_DATA_STORAGE_KEY = 'robot-slg-save-data-v1';
   const MAX_VIEW_WIDTH = 16;
@@ -2952,7 +2953,9 @@
     turnConfirm.hidden = true;
     completedBattleEvents.clear();
     battleCounters.clear();
+    const hasVisitedCustomShop = eventFlags.has('物資購入');
     eventFlags.clear();
+    if (hasVisitedCustomShop) eventFlags.add('物資購入');
     for (const flag of initialEventFlags) eventFlags.add(flag);
     currentSide = 'player';
     sideTurnCounts.player = 1;
@@ -4410,25 +4413,25 @@
   function readSaveIndexes() {
     try {
       const parsed = JSON.parse(localStorage.getItem(SAVE_INDEX_STORAGE_KEY) || '[]');
-      return Array.from({ length: 10 }, (_, index) => parsed[index] ?? null);
+      return Array.from({ length: SAVE_SLOT_COUNT }, (_, index) => parsed[index] ?? null);
     } catch (error) {
       console.warn('セーブインデックスを読み込めませんでした。', error);
-      return Array(10).fill(null);
+      return Array(SAVE_SLOT_COUNT).fill(null);
     }
   }
 
   function readSaveContents() {
     try {
       const parsed = JSON.parse(localStorage.getItem(SAVE_DATA_STORAGE_KEY) || '[]');
-      return Array.from({ length: 10 }, (_, index) => parsed[index] ?? null);
+      return Array.from({ length: SAVE_SLOT_COUNT }, (_, index) => parsed[index] ?? null);
     } catch (error) {
       console.warn('セーブ本体を読み込めませんでした。', error);
-      return Array(10).fill(null);
+      return Array(SAVE_SLOT_COUNT).fill(null);
     }
   }
 
   function deleteSaveGame(slotIndex) {
-    if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= 10) return false;
+    if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= SAVE_SLOT_COUNT) return false;
     const indexes = readSaveIndexes();
     const contents = readSaveContents();
     indexes[slotIndex] = null;
@@ -4507,7 +4510,7 @@
 
   function writeSaveGame(slotIndex) {
     const isStorySave = isClearStory && saveListReturnToStory;
-    if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= 10 || debugMode ||
+    if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= SAVE_SLOT_COUNT || debugMode ||
         (!isStorySave && (currentSide !== 'player' || isGameOver || isEnemyAiRunning || isCombatResolving ||
           isUnitMoving || battleEventActive || phaseInputLocked || pendingMove || rangeMode))) return false;
     const savedAt = new Date().toISOString();
@@ -4661,7 +4664,7 @@
     const saveIndexes = readSaveIndexes();
     const saveContents = readSaveContents();
     saveSlotList.replaceChildren();
-    for (let index = 1; index <= 10; index += 1) {
+    for (let index = 1; index <= SAVE_SLOT_COUNT; index += 1) {
       const snapshot = saveContents[index - 1];
       const record = saveIndexes[index - 1] ?? (snapshot ? {
         stageNo: snapshot.common?.stageNo,
@@ -4884,6 +4887,7 @@
           unit.ended = false;
         }
       }
+      moveCursorToNextPlayerUnit();
       updatePhaseLabel();
       announceCurrentTurn();
       playPhaseBgm();
@@ -6111,6 +6115,14 @@
       const cameraPosition = (position / travel) * getMaximum();
       setCameraPosition(isHorizontal ? cameraPosition : camera.x, isHorizontal ? camera.y : cameraPosition);
     }
+  }
+
+  function moveCursorToNextPlayerUnit() {
+    const unit = units.find((candidate) => candidate.side === 'player' && !candidate.ended && candidate.hp > 0);
+    if (!unit) return;
+    cursor.x = unit.x;
+    cursor.y = unit.y;
+    scrollToCursor();
   }
 
   function scrollToCursor() {
