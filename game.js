@@ -111,6 +111,15 @@
   let bgmStartDeferredUntilPhaseAnnouncement = false;
   let bgmTransitionId = 0;
   let audioUnlocked = false;
+  const sePreloadFiles = [
+    'BreakObj.mp3', 'Buy.mp3', 'dead_en.mp3', 'dead_pc.mp3', 'DJのスクラッチ2.mp3',
+    'Put.mp3', 'Ray_01.mp3', 'Ray_02.mp3', 'Ray_03.mp3', 'robo_pop.mp3', 'Set.mp3',
+    'shot_en1.mp3', 'shot_gun.mp3', 'shot_pc1.mp3', 'shot_pc2.mp3', 'shot_pc3.mp3',
+    'sword.mp3', 'whistle.mp3',
+  ];
+  const seBuffers = new Map();
+  let seAudioContext = null;
+  let sePreloadPromise = null;
   let phaseInputLocked = false;
   let titleSelection = 1;
   let rulesReturnToTitle = false;
@@ -1249,6 +1258,7 @@
     if (titleOpening) return;
     titleOpening = true;
     audioUnlocked = true;
+    void preloadSeBuffers();
     startCurrentBgm();
     audioStartScreen.classList.add('fade-text');
     await wait(1000);
@@ -5499,14 +5509,60 @@
 
   function playSe(filename) {
     if (!filename) return Promise.resolve();
-    const audio = new Audio(`SE/${filename}`);
-    audio.volume = 0.8;
-    return new Promise((resolve) => {
-      const finish = () => resolve();
-      audio.addEventListener('ended', finish, { once: true });
-      audio.addEventListener('error', finish, { once: true });
-      audio.play().catch(finish);
+    const playBufferedSe = (buffer) => new Promise((resolve) => {
+      const source = seAudioContext.createBufferSource();
+      const volume = seAudioContext.createGain();
+      source.buffer = buffer;
+      volume.gain.value = 0.8;
+      source.connect(volume);
+      volume.connect(seAudioContext.destination);
+      source.addEventListener('ended', resolve, { once: true });
+      source.start();
     });
+    const playWithHtmlAudio = () => {
+      const audio = new Audio(`SE/${filename}`);
+      audio.volume = 0.8;
+      return new Promise((resolve) => {
+        const finish = () => resolve();
+        audio.addEventListener('ended', finish, { once: true });
+        audio.addEventListener('error', finish, { once: true });
+        audio.play().catch(finish);
+      });
+    };
+    const cachedBuffer = seBuffers.get(filename);
+    if (cachedBuffer && seAudioContext) return playBufferedSe(cachedBuffer);
+    if (sePreloadPromise && sePreloadFiles.includes(filename)) {
+      return sePreloadPromise.then(() => {
+        const buffer = seBuffers.get(filename);
+        return buffer && seAudioContext ? playBufferedSe(buffer) : playWithHtmlAudio();
+      });
+    }
+    return playWithHtmlAudio();
+  }
+
+  async function preloadSeBuffers() {
+    if (sePreloadPromise) return sePreloadPromise;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    try {
+      seAudioContext = new AudioContextClass();
+      await seAudioContext.resume();
+      sePreloadPromise = Promise.all(sePreloadFiles.map(async (filename) => {
+        try {
+          const response = await fetch(`SE/${encodeURIComponent(filename)}`);
+          if (!response.ok) throw new Error(`SE load failed: ${filename}`);
+          const buffer = await response.arrayBuffer();
+          seBuffers.set(filename, await seAudioContext.decodeAudioData(buffer));
+        } catch (error) {
+          console.warn(`効果音を先読みできませんでした: ${filename}`, error);
+        }
+      }));
+      await sePreloadPromise;
+    } catch (error) {
+      console.warn('効果音の先読みを開始できませんでした。通常の再生方式を使います。', error);
+      seAudioContext = null;
+      sePreloadPromise = null;
+    }
   }
 
   function getHitEffectImage(attacker) {
