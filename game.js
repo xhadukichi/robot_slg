@@ -398,6 +398,7 @@
   let saveSlotMode = 'save';
   let saveSlotDeletionMode = false;
   let saveListReturnToTitle = false;
+  let saveListReturnToGameOver = false;
   let customPoints = 0;
   let customFunds = 0;
   let battleFundsEarned = 0;
@@ -801,6 +802,13 @@
         restoreSaveSlotDialogParent();
         titleScreen.classList.remove('title-load-open');
         titleOptions[1]?.focus();
+      } else if (saveListReturnToGameOver) {
+        saveListReturnToGameOver = false;
+        gameOverOptionsReady = true;
+        gameOverSelection = 1;
+        updateGameOverSelection();
+        restoreSaveSlotDialogParent();
+        gameOverOptions.querySelector('[data-game-over-action="load"]')?.focus();
       } else if (saveListReturnToStory) {
         saveListReturnToStory = false;
         continueAfterStorySave = saveListContinueAfterClose;
@@ -2792,7 +2800,18 @@
 
   function chooseGameOverAction(action) {
     if (action === 'retry') retryStage();
+    else if (action === 'load') openGameOverLoadList();
     else if (action === 'top') returnToTopMenuFromGameOver();
+  }
+
+  function openGameOverLoadList() {
+    if (!gameOverOptionsReady || clearTransitioning) return;
+    gameOverOptionsReady = false;
+    saveListReturnToGameOver = true;
+    saveSlotDialog.classList.add('floating-save-dialog');
+    document.body.append(saveSlotDialog);
+    openSaveSlotList('load');
+    saveSlotDialog.querySelector('[data-action="close-save-slots"]')?.focus();
   }
 
   async function retryStage() {
@@ -4763,11 +4782,15 @@
       explosionEffects.length = 0;
       hitEffects.length = 0;
       gameResult.hidden = true;
+      gameOverOptions.hidden = true;
+      gameResult.classList.remove('show-game-over-options');
+      gameOverOptionsReady = false;
       unitCommand.hidden = true;
       unitStatus.hidden = true;
       emptyCommand.hidden = true;
       saveSlotDialog.hidden = true;
       saveListReturnToTitle = false;
+      saveListReturnToGameOver = false;
       restoreSaveSlotDialogParent();
       titleScreen.classList.remove('title-load-open');
       turnConfirm.hidden = true;
@@ -5667,6 +5690,8 @@
         await animateHpCountdown(obstacle, previousHp, obstacle.hp);
         if (obstacle.hp <= 0) {
           obstacles.splice(obstacles.indexOf(obstacle), 1);
+          if (enemyRangePreview?.unit === attacker && enemyRangePreview.mode === 'attack') enemyRangePreview = null;
+          draw();
           await Promise.all([startExplosion(obstacle), playSe('BreakObj.mp3')]);
           const eventPlayed = await runBattleObjectDefeatEvent(obstacle);
           if (!eventPlayed) showAttackMessage('障害物が破壊された！', 1800);
