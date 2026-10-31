@@ -157,6 +157,8 @@
   let battleMessageResolve = null;
   let battleAttackEvents = new Map();
   let battleDefenseEvents = new Map();
+  let battleObjectAttackBeforeEvents = new Map();
+  let battleObjectAttackAfterEvents = new Map();
   let battleDefeatEvents = new Map();
   let battleObjectDefeatEvent = null;
   let battleEndEvent = null;
@@ -529,9 +531,24 @@
       const bounds = canvas.getBoundingClientRect();
       const scaleX = canvas.width / bounds.width;
       const scaleY = canvas.height / bounds.height;
-      cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, Math.floor(camera.x + ((event.clientX - bounds.left) * scaleX) / TILE_SIZE)));
-      cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, Math.floor(camera.y + ((event.clientY - bounds.top) * scaleY) / TILE_SIZE)));
+      const mapX = Math.max(0, Math.min(MAP_WIDTH - 1, Math.floor(camera.x + ((event.clientX - bounds.left) * scaleX) / TILE_SIZE)));
+      const mapY = Math.max(0, Math.min(MAP_HEIGHT - 1, Math.floor(camera.y + ((event.clientY - bounds.top) * scaleY) / TILE_SIZE)));
+      const clickedUnit = getUnitAtPosition(mapX, mapY);
+      unitCommand.hidden = true;
+      if (clickedUnit) {
+        selectedUnit = clickedUnit;
+        cursor.x = clickedUnit.x;
+        cursor.y = clickedUnit.y;
+        showUnitStatus(clickedUnit, false);
+      } else {
+        selectedUnit = null;
+        unitStatus.hidden = true;
+        statusFromCommand = false;
+        cursor.x = mapX;
+        cursor.y = mapY;
+      }
       scrollToCursor();
+      draw();
       return;
     }
     if (battleCommandExecutionDepth > 0 || battleEventActive || isGameOver || isUnitMoving || isEnemyAiRunning || isCombatResolving || explosionEffects.length || phaseInputLocked || !turnConfirm.hidden || !saveSlotDialog.hidden || !attackChoiceCommand.hidden || !itemChoiceCommand.hidden || !itemConfirmCommand.hidden || !precisionConfirmCommand.hidden || !hateConfirmCommand.hidden) return;
@@ -577,6 +594,11 @@
       }
       cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
       cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
+      if (clickedUnit && clickedUnit !== selectedUnit && canAttackUnitTarget(selectedUnit, clickedUnit)) {
+        tryAttackTarget(clickedUnit);
+        scrollToCursor();
+        return;
+      }
       if (clickedObstacle?.destructible) {
         if (canAttackObstacleTarget(selectedUnit, clickedObstacle)) {
           void tryAttackObstacle(clickedObstacle);
@@ -635,8 +657,8 @@
         updateEmptyCommandSelection();
         emptyCommand.hidden = false;
       }
+      draw();
     }
-    scrollToCursor();
   });
 
   canvas.parentElement.addEventListener('contextmenu', (event) => {
@@ -2991,12 +3013,14 @@
       const battleScript = await loadEventScript(battlePath);
       await applyBattleSetup(battleScript);
       prepareBattleEventData(battleScript);
-      const turnZeroMessages = parseBattleMessageRecords(extractEventBlock(battleScript, 'ターン　０'));
+      const turnZeroEvent = battleTimeEvents.get('player:0');
+      if (!turnZeroEvent) throw new Error('PCターン 0 のイベントがありません。');
+      const turnZeroMessages = parseBattleMessageRecords(turnZeroEvent.lines);
       if (!turnZeroMessages.length) throw new Error('ターン　０にＭＥＳがありません。');
       bgmStartDeferredUntilPhaseAnnouncement = true;
       playPhaseBgm();
       await enterStage();
-      await playBattleScriptCommands(extractEventBlock(battleScript, 'ターン　０'));
+      await playBattleScriptCommands(turnZeroEvent.lines);
       announceCurrentTurn(true);
     } catch (error) {
       bgmStartDeferredUntilPhaseAnnouncement = false;
@@ -3016,6 +3040,8 @@
     const battleEvents = parseBattleTriggerRecords(battleScript);
     battleAttackEvents = battleEvents.attacks;
     battleDefenseEvents = battleEvents.defenses;
+    battleObjectAttackBeforeEvents = battleEvents.objectAttackBefore;
+    battleObjectAttackAfterEvents = battleEvents.objectAttackAfter;
     battleDefeatEvents = battleEvents.defeats;
     battleObjectDefeatEvent = battleEvents.objectDefeat;
     battleEndEvent = battleEvents.end;
@@ -3124,6 +3150,8 @@
   function parseBattleTriggerRecords(source) {
     const attacks = new Map();
     const defenses = new Map();
+    const objectAttackBefore = new Map();
+    const objectAttackAfter = new Map();
     const defeats = new Map();
     const times = new Map();
     const movements = new Map();
@@ -3132,27 +3160,68 @@
     let end = null;
     const names = source.replace(/\r/g, '').split('\n')
       .map((line) => line.trim())
-      .filter((line) => /^(?:攻撃前|撃破|移動)[\t \u3000]+[\d０-９]+$/.test(line) || /^ターン[\t \u3000]+[\d０-９]+[\t \u3000]+(?:PC|EN)$/i.test(normalizeBattleLine(line)));
+      .filter((line) => /^(?:攻撃前|攻撃後|撃破|移動)[\t \u3000]+[\d０-９]+$/.test(line) || /^ターン[\t \u3000]+[\d０-９]+(?:[\t \u3000]+(?:PC|EN|NPC))?$/i.test(normalizeBattleLine(line)));
 
     for (const name of names) {
       const normalizedName = normalizeBattleLine(name);
       const lines = extractEventBlock(source, name);
       const messages = parseBattleMessageRecords(lines);
       const attackName = normalizedName.match(/^攻撃前\s+(\d+)$/);
-      const timeName = normalizedName.match(/^ターン\s+(\d+)\s+(PC|EN)$/i);
+      const attackAfterName = normalizedName.match(/^攻撃後\s+(\d+)$/);
+      const timeName = normalizedName.match(/^ターン\s+(\d+)\s+(PC|EN|NPC)$/i);
+      const turnContainerName = normalizedName.match(/^ターン\s+(\d+)$/i);
       if (timeName) {
-        const side = timeName[2].toUpperCase() === 'PC' ? 'player' : 'enemy';
+        const phase = timeName[2].toUpperCase();
+        const side = phase === 'PC' ? 'player' : phase === 'EN' ? 'enemy' : 'npc';
         times.set(`${side}:${Number(timeName[1])}`, { name, lines });
         continue;
       }
+      if (turnContainerName) {
+        for (let index = 0; index < lines.length; index++) {
+          const normalizedPhase = normalizeBattleLine(lines[index]);
+          const namedPhase = normalizedPhase.match(/^(PC|EN|NPC)ターン\s+(\d+)$/i);
+          const legacyPhase = normalizedPhase.match(/^(PC|EN|NPC)\s+(\d+)$/i);
+          const legacyTurnPhase = normalizedPhase.match(/^ターン\s+(\d+)\s+(PC|EN|NPC)$/i);
+          const phase = namedPhase?.[1] ?? legacyPhase?.[1] ?? legacyTurnPhase?.[2];
+          const phaseTurn = namedPhase?.[2] ?? legacyPhase?.[2] ?? legacyTurnPhase?.[1];
+          if (!phase || !phaseTurn) continue;
+          const phaseBlock = extractBattleBraceBlock(lines, index + 1);
+          if (!phaseBlock) continue;
+          const normalizedPhaseName = phase.toUpperCase();
+          const side = normalizedPhaseName === 'PC' ? 'player' : normalizedPhaseName === 'EN' ? 'enemy' : 'npc';
+          times.set(`${side}:${Number(phaseTurn)}`, {
+            name: `${name} ${normalizedPhase}`,
+            lines: phaseBlock.lines,
+          });
+          index = phaseBlock.endIndex;
+        }
+        continue;
+      }
       if (attackName) {
-        const condition = lines.map(normalizeBattleLine).find((line) => /^(?:PC\d+\s+VS\s+EN|EN\s+VS\s+PC\d+)$/.test(line));
+        const conditionIndex = lines.findIndex((line) => /^(?:PC\d+\s+VS\s+EN|EN\s+VS\s+PC\d+|EN\s+VS\s+OBJ\d+)$/i.test(normalizeBattleLine(line)));
+        const condition = conditionIndex < 0 ? '' : normalizeBattleLine(lines[conditionIndex]);
         const outgoing = condition?.match(/^PC(\d+)\s+VS\s+EN$/);
         const incoming = condition?.match(/^EN\s+VS\s+PC(\d+)$/);
+        const objectTarget = condition?.match(/^EN\s+VS\s+(OBJ\d+)$/);
         if (messages.length && outgoing) {
           attacks.set(`PC${outgoing[1].padStart(2, '0')}`, { name, messages });
         } else if (messages.length && incoming) {
           defenses.set(`PC${incoming[1].padStart(2, '0')}`, { name, messages });
+        } else if (objectTarget) {
+          const conditionBlock = extractBattleBraceBlock(lines, conditionIndex + 1);
+          if (conditionBlock) objectAttackBefore.set(normalizeUnitId(objectTarget[1]), { name, lines: conditionBlock.lines });
+        }
+        continue;
+      }
+      if (attackAfterName) {
+        const conditionIndex = lines.findIndex((line) => /^EN\s+VS\s+OBJ\d+$/i.test(normalizeBattleLine(line)));
+        if (conditionIndex >= 0) {
+          const condition = normalizeBattleLine(lines[conditionIndex]);
+          const objectTarget = condition.match(/^EN\s+VS\s+(OBJ\d+)$/i);
+          const conditionBlock = extractBattleBraceBlock(lines, conditionIndex + 1);
+          if (objectTarget && conditionBlock) {
+            objectAttackAfter.set(normalizeUnitId(objectTarget[1]), { name, lines: conditionBlock.lines });
+          }
         }
         continue;
       }
@@ -3161,12 +3230,25 @@
       const movementName = normalizedName.match(/^移動\s+(\d+)$/);
       if (movementName) {
         const conditions = lines.map(normalizeBattleLine);
-        const condition = conditions.find((line) => /^(?:NPC|PC|EN)\d+\s*\(\d+\s*,\s*\d+\)\s*\(\d+\s*,\s*\d+\)$/.test(line));
-        const match = condition?.match(/^((?:NPC|PC|EN)\d+)\s*\((\d+)\s*,\s*(\d+)\)\s*\((\d+)\s*,\s*(\d+)\)$/);
+        let movementConditionIndex = 0;
+        for (let index = 0; index < lines.length; index++) {
+          const condition = normalizeBattleLine(lines[index]);
+          const match = condition.match(/^((?:NPC|PC|EN)\d+)\s*\((\d+)\s*,\s*(\d+)\)\s*\((\d+)\s*,\s*(\d+)\)$/);
+          if (!match) continue;
+          const conditionBlock = extractBattleBraceBlock(lines, index + 1);
+          if (!conditionBlock) continue;
+          const unitId = normalizeUnitId(match[1]);
+          movements.set(`${name}:${movementConditionIndex++}`, {
+            name,
+            unitId,
+            lines: conditionBlock.lines,
+            bounds: match.slice(2).map(Number),
+          });
+          index = conditionBlock.endIndex;
+        }
         const groupCondition = conditions.find((line) => /^NPC\s*\(\d+\s*,\s*\d+\)\s*\(\d+\s*,\s*\d+\)$/.test(line));
         const groupMatch = groupCondition?.match(/^NPC\s*\((\d+)\s*,\s*(\d+)\)\s*\((\d+)\s*,\s*(\d+)\)$/);
-        if (match) movements.set(normalizeUnitId(match[1]), { name, lines, bounds: match.slice(2).map(Number) });
-        else if (groupMatch) groupMovements.push({ name, lines, bounds: groupMatch.slice(1).map(Number) });
+        if (groupMatch) groupMovements.push({ name, lines, bounds: groupMatch.slice(1).map(Number) });
       } else if (defeatName?.[1] === '100') {
         end = { name, lines };
       } else if (defeatName) {
@@ -3178,7 +3260,7 @@
       }
     }
 
-    return { attacks, defenses, defeats, times, movements, groupMovements, objectDefeat, end };
+    return { attacks, defenses, objectAttackBefore, objectAttackAfter, defeats, times, movements, groupMovements, objectDefeat, end };
   }
 
   function parseBattleLabels(source) {
@@ -3307,9 +3389,9 @@
     if (/^BGM\s+再生\s+\S+$/i.test(line)) return true;
     if (/^BGM\s+変更\s+\S+$/i.test(line)) return true;
     if (/^SE\s+再生\s+\S+$/i.test(line)) return true;
-    if (/^(?:援軍配置\s|カーソル\s|メッセージ消去$|ゲームオーバー$|ステージクリア$|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|カウンタ\s|移動目標\s|退却\s|GOTO(?:\s|:|：)|IF(?:\s|$))/.test(line)) return true;
+    if (/^(?:援軍配置\s|カーソル\s|メッセージ消去$|ゲームオーバー$|ステージクリア$|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|カウンタ\s|移動目標\s|攻撃目標\s|退却\s|GOTO(?:\s|:|：)|IF(?:\s|$))/.test(line)) return true;
     return /^(?:IF\s+PC\d+|IF\s+座標\s+PC\d+|IF\s+(?:フラグ|カウンタ)\s|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
-      /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|軍資金\s*(?:\+\s*\d+|支払い)|成長ポイント\s*\+\s*\d+|カウンタ\s+.+|移動目標\s+NPC\d+\s*\(\d+\s*,\s*\d+\)|退却\s+NPC\d+|フラグ\s+(?:ON|OFF)\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
+      /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|軍資金\s*(?:\+\s*\d+|支払い)|成長ポイント\s*\+\s*\d+|カウンタ\s+.+|移動目標\s+NPC\d+\s*\(\d+\s*,\s*\d+\)|攻撃目標\s+(?:EN|NPC)\d+\s+(?:PC|EN|NPC|OBJ)\d+|退却\s+NPC\d+|フラグ\s+(?:ON|OFF)\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
   }
 
   function extractBattleBraceBlock(lines, startIndex) {
@@ -3442,6 +3524,7 @@
       const retreatCommand = line.match(/^退却\s+(NPC\d+)$/i);
       const counterCommand = line.match(/^カウンタ\s+(.+?)\s*([+-])\s*(\d+)$/);
       const movementGoalCommand = line.match(/^移動目標\s+(NPC\d+)\s*\((\d+)\s*,\s*(\d+)\)$/i);
+      const attackTargetCommand = line.match(/^攻撃目標\s+((?:EN|NPC)\d+)\s+((?:PC|EN|NPC|OBJ)\d+)$/i);
       const gameOverCommand = line === 'ゲームオーバー';
       const clearCommand = line === 'ステージクリア';
       const bgmStopCommand = /^BGM\s+ストップ$/i.test(line);
@@ -3453,7 +3536,7 @@
       const battleFundsCommand = line.match(/^軍資金\s*\+\s*(\d+)$/);
       const payBattleFundsCommand = line === '軍資金 支払い';
       const growthPointsCommand = line.match(/^成長ポイント\s*\+\s*(\d+)$/);
-      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || localGotoCommand || retreatCommand || counterCommand || movementGoalCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || flagCommand || battleFundsCommand || payBattleFundsCommand || growthPointsCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
+      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || localGotoCommand || retreatCommand || counterCommand || movementGoalCommand || attackTargetCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || flagCommand || battleFundsCommand || payBattleFundsCommand || growthPointsCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
       if (!recognizedCommand) {
         pendingMessageLines.push(rawLine);
         continue;
@@ -3516,6 +3599,18 @@
         const y = Number(movementGoalCommand[3]);
         if (x < 1 || x > MAP_WIDTH || y < 1 || y > MAP_HEIGHT) throw new Error(`移動目標 (${x},${y}) はマップ外です。`);
         unit.movementGoal = { x: x - 1, y: y - 1 };
+      } else if (attackTargetCommand) {
+        const unitId = normalizeUnitId(attackTargetCommand[1]);
+        const targetId = normalizeUnitId(attackTargetCommand[2]);
+        const unit = units.find((candidate) => candidate.id === unitId && candidate.side === 'enemy');
+        const target = targetId.startsWith('OBJ')
+          ? obstacles.find((candidate) => candidate.id === targetId)
+          : units.find((candidate) => candidate.id === targetId);
+        if (!unit) throw new Error(`攻撃目標の指定先 ${unitId} が敵ユニットとして配置されていません。`);
+        if (!target) throw new Error(`攻撃目標 ${targetId} が配置されていません。`);
+        if (target.side === unit.side) throw new Error(`${unitId} と同じ陣営の ${targetId} は攻撃目標に指定できません。`);
+        if (targetId.startsWith('OBJ') && !target.destructible) throw new Error(`${targetId} は破壊可能オブジェクトではありません。`);
+        unit.attackTargetId = targetId;
       } else if (reinforcement) {
         if (reinforcement[1].toUpperCase().startsWith('EN')) {
           await deployBattleEnemy(reinforcement[1], Number(reinforcement[2]), Number(reinforcement[3]));
@@ -3631,6 +3726,15 @@
     await playBattleMessages(event.messages);
   }
 
+  async function runBattleObjectAttackEvent(attacker, obstacle, phase) {
+    if (attacker.side !== 'enemy') return false;
+    const events = phase === 'before' ? battleObjectAttackBeforeEvents : battleObjectAttackAfterEvents;
+    const event = events.get(normalizeUnitId(obstacle.id));
+    if (!event || completedBattleEvents.has(event.name)) return false;
+    completedBattleEvents.add(event.name);
+    return playBattleScriptCommands(event.lines);
+  }
+
   async function runBattleDefeatEvent(unit) {
     const event = battleDefeatEvents.get(unit.id);
     if (!event || completedBattleEvents.has(event.name)) return;
@@ -3651,8 +3755,8 @@
       const endedEvent = await playBattleScriptCommands(event.lines);
       if (endedEvent || isGameOver || clearTransitioning) return;
     }
-    for (const [unitId, event] of battleMovementEvents) {
-      const unit = units.find((candidate) => candidate.id === unitId);
+    for (const event of battleMovementEvents.values()) {
+      const unit = units.find((candidate) => candidate.id === event.unitId);
       if (!unit || completedBattleEvents.has(event.name)) continue;
       const [x1, y1, x2, y2] = event.bounds;
       const mapX = unit.x + 1;
@@ -3665,8 +3769,8 @@
     }
   }
 
-  async function runBattleTimeEvents() {
-    const event = battleTimeEvents.get(`${currentSide}:${sideTurnCounts[currentSide]}`);
+  async function runBattleTimeEvents(side = currentSide, turnCount = sideTurnCounts[side]) {
+    const event = battleTimeEvents.get(`${side}:${turnCount}`);
     if (!event || completedBattleEvents.has(event.name)) return false;
     completedBattleEvents.add(event.name);
     await playBattleScriptCommands(event.lines);
@@ -4236,7 +4340,7 @@
         current.imageFile = line;
         continue;
       }
-      const unitTypeMatch = line.match(/^(Type_(?:PC|EN)_\d+)$/i);
+      const unitTypeMatch = line.match(/^(Type_(?:PC|EN)_[\w-]+)$/i);
       if (unitTypeMatch) {
         if (current.unitTypeId) throw new Error(`${blockName}: ${currentId} に基本パラメータが複数指定されています。`);
         current.unitTypeId = unitTypeMatch[1];
@@ -4795,6 +4899,48 @@
     if (currentSide === 'enemy' && !debugMode) runEnemyTurn();
   }
 
+  async function runEnemyTurnAgainstObstacle(enemy, obstacle) {
+    let obstacleTarget = canAttackObstacleTarget(enemy, obstacle) ? obstacle : null;
+    if (!obstacleTarget && !enemy.moveUsed) {
+      const destination = chooseApproachTileByPath(enemy, obstacle);
+      if (destination) {
+        const path = getMovePath(enemy, destination.x, destination.y);
+        const moveDestination = path[path.length - 1];
+        if (moveDestination) {
+          cursor.x = moveDestination.x;
+          cursor.y = moveDestination.y;
+          scrollDestinationIntoView(enemy, moveDestination);
+          await waitForCameraToStop();
+        }
+        enemyRangePreview = { unit: enemy, mode: 'move' };
+        draw();
+        await wait(700);
+        await new Promise((resolve) => animateUnitMove(enemy, path, resolve));
+        enemy.moveRemaining = Math.max(0, (enemy.moveRemaining ?? enemy.moveRange) - Math.max(0, path.length - 1));
+        enemy.moveUsed = enemy.moveRemaining <= 0;
+        enemyRangePreview = null;
+        draw();
+        await runBattleMovementEvents();
+        if (isGameOver || clearTransitioning || currentSide !== 'enemy') return;
+        obstacleTarget = canAttackObstacleTarget(enemy, obstacle) ? obstacle : null;
+      }
+    }
+
+    if (!obstacleTarget || enemy.attackUsed) return;
+    selectedUnit = enemy;
+    cursor.x = obstacle.x;
+    cursor.y = obstacle.y;
+    scrollEntityToCenter(obstacle);
+    await waitForCameraToStop();
+    await wait(350);
+    rangeMode = 'attack';
+    enemyRangePreview = { unit: enemy, mode: 'attack', target: obstacle };
+    draw();
+    await wait(300);
+    await tryAttackObstacle(obstacle);
+    await wait(300);
+  }
+
   const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
   async function runEnemyTurn() {
@@ -4811,8 +4957,28 @@
       selectedUnit = enemy;
       cursor.x = enemy.x;
       cursor.y = enemy.y;
-      scrollToCursor();
+      scrollEntityToCenter(enemy);
+      await waitForCameraToStop();
       await wait(400);
+
+      let assignedObstacleTarget = null;
+      let assignedUnitTarget = null;
+      if (enemy.attackTargetId) {
+        if (enemy.attackTargetId.startsWith('OBJ')) {
+          assignedObstacleTarget = obstacles.find((candidate) => candidate.id === enemy.attackTargetId) ?? null;
+        } else {
+          assignedUnitTarget = units.find((candidate) => candidate.id === enemy.attackTargetId && candidate.side !== enemy.side) ?? null;
+        }
+        if (!assignedObstacleTarget && !assignedUnitTarget) enemy.attackTargetId = null;
+      }
+
+      if (assignedObstacleTarget) {
+        await runEnemyTurnAgainstObstacle(enemy, assignedObstacleTarget);
+        enemy.ended = true;
+        checkUnitCompletion(enemy);
+        if (!isGameOver) await wait(350);
+        continue;
+      }
 
       let preferredHateTarget = null;
       if (enemy.hateTargetId) {
@@ -4824,14 +4990,10 @@
           await wait(900);
         }
       }
-      const target = preferredHateTarget ?? findNearestOpponent(enemy);
+      const target = assignedUnitTarget ?? preferredHateTarget ?? findNearestOpponent(enemy);
       if (target) {
-        cursor.x = target.x;
-        cursor.y = target.y;
-        scrollToCursor();
-        await wait(350);
-
-        let attackTarget = findOpponentInRange(enemy, preferredHateTarget);
+        let forcedTarget = assignedUnitTarget ?? preferredHateTarget;
+        let attackTarget = findOpponentInRange(enemy, forcedTarget);
         let obstacleTarget = null;
         let approachTarget = target;
         const firstBlocker = attackTarget ||
@@ -4849,24 +5011,40 @@
           const destination = chooseApproachTileByPath(enemy, approachTarget, preferredHateTarget);
           if (destination) {
             const path = getMovePath(enemy, destination.x, destination.y);
+            const moveDestination = path[path.length - 1];
+            if (moveDestination) {
+              cursor.x = moveDestination.x;
+              cursor.y = moveDestination.y;
+              scrollDestinationIntoView(enemy, moveDestination);
+              await waitForCameraToStop();
+            }
             enemyRangePreview = { unit: enemy, mode: 'move' };
             draw();
-            await wait(450);
+            await wait(700);
             await new Promise((resolve) => animateUnitMove(enemy, path, resolve));
             enemy.moveRemaining = Math.max(0, (enemy.moveRemaining ?? enemy.moveRange) - Math.max(0, path.length - 1));
             enemy.moveUsed = enemy.moveRemaining <= 0;
             enemyRangePreview = null;
             draw();
-            cursor.x = target.x;
-            cursor.y = target.y;
-            scrollToCursor();
-            await wait(250);
-            attackTarget = findOpponentInRange(enemy, preferredHateTarget);
+            await runBattleMovementEvents();
+            if (isGameOver || clearTransitioning || currentSide !== 'enemy') break;
+            const eventTargetIsObstacle = enemy.attackTargetId?.startsWith('OBJ') ?? false;
+            if (enemy.attackTargetId) {
+              if (eventTargetIsObstacle) {
+                const eventObstacleTarget = obstacles.find((candidate) => candidate.id === enemy.attackTargetId);
+                obstacleTarget = eventObstacleTarget && canAttackObstacleTarget(enemy, eventObstacleTarget)
+                  ? eventObstacleTarget
+                  : null;
+              } else {
+                forcedTarget = units.find((candidate) => candidate.id === enemy.attackTargetId && candidate.side !== enemy.side) ?? forcedTarget;
+              }
+            }
+            attackTarget = findOpponentInRange(enemy, forcedTarget);
             const blockerAfterMove = attackTarget ||
               !isWithinAttackRange(enemy, unitDistance(enemy, target))
               ? null
               : getBlockingObstacle(enemy, target);
-            if (blockerAfterMove?.destructible &&
+            if (!eventTargetIsObstacle && blockerAfterMove?.destructible &&
                 isWithinAttackRange(enemy, distanceFromUnitToTile(enemy, blockerAfterMove.x, blockerAfterMove.y))) {
               obstacleTarget = blockerAfterMove;
             }
@@ -4874,13 +5052,11 @@
         }
 
         if ((attackTarget || obstacleTarget) && !enemy.attackUsed) {
-          cursor.x = enemy.x;
-          cursor.y = enemy.y;
-          scrollToCursor();
-          await wait(250);
-          cursor.x = (obstacleTarget ?? attackTarget).x;
-          cursor.y = (obstacleTarget ?? attackTarget).y;
-          scrollToCursor();
+          const finalTarget = obstacleTarget ?? attackTarget;
+          cursor.x = finalTarget.x;
+          cursor.y = finalTarget.y;
+          scrollEntityToCenter(finalTarget);
+          await waitForCameraToStop();
           await wait(350);
           selectedUnit = enemy;
           rangeMode = 'attack';
@@ -4909,7 +5085,8 @@
 
       if (!isGameOver && currentSide === 'enemy') {
         try {
-          await runNpcMovementGoals();
+          await runBattleTimeEvents('npc', sideTurnCounts.enemy);
+          if (!isGameOver && !clearTransitioning && currentSide === 'enemy') await runNpcMovementGoals();
         } catch (error) {
           console.error('NPC移動イベントでエラーが発生しました。', error);
           showAttackMessage(`NPC移動イベントエラー: ${error.message || error}`, 15000);
@@ -4974,16 +5151,18 @@
       setBgm(phaseBgmFiles.npc);
       cursor.x = npc.x;
       cursor.y = npc.y;
-      scrollToCursor();
+      scrollEntityToCenter(npc);
       await waitForCameraToStop();
       enemyRangePreview = { unit: npc, mode: 'move' };
       draw();
       await wait(250);
-      await new Promise((resolve) => animateUnitMove(npc, movementPath, resolve));
-      cursor.x = npc.x;
-      cursor.y = npc.y;
-      scrollToCursor();
+      const moveDestination = movementPath[movementPath.length - 1];
+      cursor.x = moveDestination.x;
+      cursor.y = moveDestination.y;
+      scrollDestinationIntoView(npc, moveDestination);
       await waitForCameraToStop();
+      await wait(250);
+      await new Promise((resolve) => animateUnitMove(npc, movementPath, resolve));
       enemyRangePreview = null;
       draw();
       await wait(250);
@@ -5125,10 +5304,34 @@
       for (let column = 0; column < footprint.width; column++) {
         const tile = { x: target.x + column, y: target.y + row };
         const distance = distanceFromUnitToTile(attacker, tile.x, tile.y);
-        if (isWithinAttackRange(attacker, distance) && hasLineOfSight(attacker, tile)) return true;
+        if (!isWithinAttackRange(attacker, distance)) continue;
+        const targetObstacle = getObstacleAtPosition(tile.x, tile.y);
+        const targetTerrainBlocksSight = lineOfSightBlockedTiles.has(`${tile.x},${tile.y}`);
+        if (!targetTerrainBlocksSight && hasLineOfSight(attacker, tile)) return true;
+        if ((targetTerrainBlocksSight || targetObstacle) && hasLineOfSightToTargetEdge(attacker, tile, targetObstacle)) return true;
       }
     }
     return false;
+  }
+
+  function hasLineOfSightToTargetEdge(attacker, targetTile, targetObstacle = null) {
+    const footprint = targetObstacle ? getFootprintSize(targetObstacle) : { width: 1, height: 1 };
+    const minX = targetObstacle ? targetObstacle.x : targetTile.x;
+    const minY = targetObstacle ? targetObstacle.y : targetTile.y;
+    const maxX = minX + footprint.width - 1;
+    const maxY = minY + footprint.height - 1;
+    const edgeTiles = [];
+    for (let x = minX; x <= maxX; x++) {
+      edgeTiles.push({ x, y: minY - 1 }, { x, y: maxY + 1 });
+    }
+    for (let y = minY; y <= maxY; y++) {
+      edgeTiles.push({ x: minX - 1, y }, { x: maxX + 1, y });
+    }
+    return edgeTiles.some((tile) =>
+      tile.x >= 0 && tile.y >= 0 && tile.x < MAP_WIDTH && tile.y < MAP_HEIGHT &&
+      !lineOfSightBlockedTiles.has(`${tile.x},${tile.y}`) &&
+      (!targetObstacle || getObstacleAtPosition(tile.x, tile.y) !== targetObstacle) &&
+      (unitOccupiesTile(attacker, tile.x, tile.y) || hasLineOfSight(attacker, tile)));
   }
 
   function canAttackObstacleTarget(attacker, obstacle) {
@@ -5428,6 +5631,8 @@
     cursor.x = obstacle.x;
     cursor.y = obstacle.y + obstacleFootprint.height - 1;
     try {
+      await runBattleObjectAttackEvent(attacker, obstacle, 'before');
+      if (isGameOver || clearTransitioning || !obstacles.includes(obstacle)) return false;
       attacker.attackUsed = true;
       await jumpUnit(attacker);
       await playSe(getAttackSe(attacker));
@@ -5458,6 +5663,7 @@
       } else {
         showAttackMessage(`${attacker.id} → ${obstacle.id}：回避！`);
       }
+      await runBattleObjectAttackEvent(attacker, obstacle, 'after');
       checkUnitCompletion(attacker);
       return true;
     } finally {
@@ -6254,6 +6460,38 @@
     }
   }
 
+  function scrollEntityToCenter(entity) {
+    const footprint = getFootprintSize(entity);
+    const entityCenterX = entity.x + footprint.width / 2;
+    const entityCenterY = entity.y + footprint.height / 2;
+    cameraTarget.x = Math.max(0, Math.min(MAP_WIDTH - VIEW_WIDTH, entityCenterX - VIEW_WIDTH / 2));
+    cameraTarget.y = Math.max(0, Math.min(MAP_HEIGHT - VIEW_HEIGHT, entityCenterY - VIEW_HEIGHT / 2));
+    draw();
+    if (!cameraFrame && (Math.abs(camera.x - cameraTarget.x) > 0.01 || Math.abs(camera.y - cameraTarget.y) > 0.01)) {
+      cameraFrame = requestAnimationFrame(animateCamera);
+    }
+  }
+
+  function scrollDestinationIntoView(unit, position) {
+    const footprint = getFootprintSize(unit);
+    let targetX = camera.x;
+    let targetY = camera.y;
+    if (position.x < camera.x) targetX = position.x;
+    else if (position.x + footprint.width > camera.x + VIEW_WIDTH) {
+      targetX = position.x + footprint.width - VIEW_WIDTH;
+    }
+    if (position.y < camera.y) targetY = position.y;
+    else if (position.y + footprint.height > camera.y + VIEW_HEIGHT) {
+      targetY = position.y + footprint.height - VIEW_HEIGHT;
+    }
+    cameraTarget.x = Math.max(0, Math.min(MAP_WIDTH - VIEW_WIDTH, targetX));
+    cameraTarget.y = Math.max(0, Math.min(MAP_HEIGHT - VIEW_HEIGHT, targetY));
+    draw();
+    if (!cameraFrame && (Math.abs(camera.x - cameraTarget.x) > 0.01 || Math.abs(camera.y - cameraTarget.y) > 0.01)) {
+      cameraFrame = requestAnimationFrame(animateCamera);
+    }
+  }
+
   function waitForCameraToStop() {
     return new Promise((resolve) => {
       function checkCamera() {
@@ -6360,10 +6598,14 @@
         const inMoveRange = moveRangeTiles?.has(`${mapX},${mapY}`);
         const attackDistance = attackRangeUnit ? distanceFromUnitToTile(attackRangeUnit, mapX, mapY) : 0;
         const obstacleAtTile = getObstacleAtPosition(mapX, mapY);
+        const unitAtTile = attackRangeUnit ? getUnitAtPosition(mapX, mapY) : null;
         const blockingTerrainTarget = lineOfSightBlockedTiles.has(`${mapX},${mapY}`) && !obstacleAtTile;
-        const inAttackRange = attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance) &&
+        const canHighlightUnitTarget = unitAtTile && unitAtTile.side !== attackRangeUnit?.side &&
+          (attackRangeUnit?.side !== 'player' || unitAtTile.side === 'enemy') &&
+          canAttackUnitTarget(attackRangeUnit, unitAtTile);
+        const inAttackRange = canHighlightUnitTarget || (attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance) &&
           !blockingTerrainTarget &&
-          hasLineOfSight(attackRangeUnit, { x: mapX, y: mapY }, obstacleAtTile);
+          hasLineOfSight(attackRangeUnit, { x: mapX, y: mapY }, obstacleAtTile));
         const inHateRange = hateRangeUnit && distanceFromUnitToTile(hateRangeUnit, mapX, mapY) <= 8;
         if (inMoveRange || inAttackRange || inHateRange) {
           ctx.globalAlpha = previewAlpha;
