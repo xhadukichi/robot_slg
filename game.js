@@ -97,6 +97,7 @@
   const storySpeaker = document.querySelector('#story-speaker');
   const storyWindow = introEvent.querySelector('.story-window');
   const battleMessagePanel = document.querySelector('#battle-message-panel');
+  const battleConditionPanel = document.querySelector('#battle-condition-panel');
   const storySkip = document.querySelector('#story-skip');
   const storyStart = document.querySelector('#story-start');
   const gameShell = document.querySelector('.game-shell');
@@ -162,6 +163,8 @@
   let battleDefeatEvents = new Map();
   let battleObjectDefeatEvent = null;
   let battleEndEvent = null;
+  let victoryConditions = [];
+  let defeatConditions = [];
   let battleTimeEvents = new Map();
   let battleMovementEvents = new Map();
   let battleGroupMovementEvents = [];
@@ -2890,6 +2893,9 @@
     clearTransitioning = false;
     gameOverOptionsReady = false;
     gameOverSelection = 0;
+    victoryConditions = [];
+    defeatConditions = [];
+    renderBattleConditions();
     explosionEffects.length = 0;
     hitEffects.length = 0;
     cursor.x = startCursor.x;
@@ -3101,6 +3107,7 @@
     return new Promise((resolve) => {
       battleMessageResolve = resolve;
       battleEventActive = true;
+      renderBattleConditions();
       currentStoryText = message;
       storyText.textContent = '';
       storySpeaker.textContent = activeBattleSpeaker;
@@ -3119,9 +3126,9 @@
 
   function closeBattleMessage() {
     battleEventActive = false;
-    battleMessagePanel.hidden = true;
     battleMessagePanel.classList.remove('battle-event');
     introEventImage.after(storyWindow);
+    renderBattleConditions();
     storySkip.hidden = true;
     storySpeaker.textContent = '';
     storyPortrait.hidden = true;
@@ -3132,6 +3139,46 @@
     const resolveMessage = battleMessageResolve;
     battleMessageResolve = null;
     resolveMessage?.();
+  }
+
+  function parseBattleConditions(source) {
+    let section = '';
+    const parsed = { victory: [], defeat: [] };
+    for (const rawLine of tryExtractEventBlock(source, '勝敗条件')) {
+      const line = normalizeBattleLine(rawLine);
+      if (line === '勝利条件') { section = 'victory'; continue; }
+      if (line === '敗北条件') { section = 'defeat'; continue; }
+      const condition = line.match(/^[・･]\s*(.+)$/)?.[1]?.trim();
+      if (section && condition) parsed[section].push(condition);
+    }
+    return parsed;
+  }
+
+  function renderBattleConditions() {
+    const hasConditions = victoryConditions.length > 0 || defeatConditions.length > 0;
+    battleConditionPanel.replaceChildren();
+    if (hasConditions) {
+      const columns = document.createElement('div');
+      columns.className = 'battle-condition-columns';
+      for (const [title, conditions] of [['勝利条件', victoryConditions], ['敗北条件', defeatConditions]]) {
+        if (!conditions.length) continue;
+        const group = document.createElement('section');
+        group.className = 'battle-condition-group';
+        const heading = document.createElement('h2');
+        heading.textContent = title;
+        const list = document.createElement('ul');
+        for (const condition of conditions) {
+          const item = document.createElement('li');
+          item.textContent = condition;
+          list.append(item);
+        }
+        group.append(heading, list);
+        columns.append(group);
+      }
+      battleConditionPanel.append(columns);
+    }
+    battleConditionPanel.hidden = stagePreviewMode || battleEventActive || !hasConditions;
+    battleMessagePanel.hidden = stagePreviewMode || (!battleEventActive && !hasConditions);
   }
 
   let activeBattleSpeaker = '';
@@ -3404,6 +3451,7 @@
   }
 
   function isBattleDirective(line) {
+    if (/^敗北条件(?:追加|削除)(?:\s+.+)?$/.test(line)) return true;
     if (/^BGM\s+(?:ストップ|スタート)$/i.test(line)) return true;
     if (/^BGM\s+再生\s+\S+$/i.test(line)) return true;
     if (/^BGM\s+変更\s+\S+$/i.test(line)) return true;
@@ -3534,7 +3582,8 @@
       if (messages.length) await playBattleMessages(messages);
     };
 
-    for (const rawLine of selectedLines) {
+    for (let lineIndex = 0; lineIndex < selectedLines.length; lineIndex++) {
+      const rawLine = selectedLines[lineIndex];
       const line = normalizeBattleLine(rawLine);
       const reinforcement = line.match(/^援軍配置\s+((?:PC|NPC|EN)\d+)\s*:\s*\((\d+)\s*,\s*(\d+)\)$/i);
       const cursorCommand = line.match(/^カーソル\s*\((\d+)\s*,\s*(\d+)\)$/);
@@ -3542,6 +3591,7 @@
       const localGotoCommand = line.match(/^(?:GOTO|ＧＯＴＯ)\s+(.+)$/i);
       const retreatCommand = line.match(/^退却\s+(NPC\d+)$/i);
       const counterCommand = line.match(/^カウンタ\s+(.+?)\s*([+-])\s*(\d+)$/);
+      const defeatConditionCommand = line.match(/^敗北条件(追加|削除)(?:\s+(.+))?$/);
       const movementGoalCommand = line.match(/^移動目標\s+(NPC\d+)\s*\((\d+)\s*,\s*(\d+)\)$/i);
       const attackTargetCommand = line.match(/^攻撃目標\s+((?:EN|NPC)\d+)\s+((?:PC|EN|NPC|OBJ)\d+)$/i);
       const gameOverCommand = line === 'ゲームオーバー';
@@ -3555,7 +3605,7 @@
       const battleFundsCommand = line.match(/^軍資金\s*\+\s*(\d+)$/);
       const payBattleFundsCommand = line === '軍資金 支払い';
       const growthPointsCommand = line.match(/^成長ポイント\s*\+\s*(\d+)$/);
-      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || localGotoCommand || retreatCommand || counterCommand || movementGoalCommand || attackTargetCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || flagCommand || battleFundsCommand || payBattleFundsCommand || growthPointsCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
+      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || localGotoCommand || retreatCommand || counterCommand || defeatConditionCommand || movementGoalCommand || attackTargetCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || flagCommand || battleFundsCommand || payBattleFundsCommand || growthPointsCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
       if (!recognizedCommand) {
         pendingMessageLines.push(rawLine);
         continue;
@@ -3607,6 +3657,20 @@
         const current = battleCounters.get(key) ?? 0;
         const delta = Number(counterCommand[3]) * (counterCommand[2] === '-' ? -1 : 1);
         battleCounters.set(key, current + delta);
+      } else if (defeatConditionCommand) {
+        let condition = defeatConditionCommand[2]?.replace(/^[・･]\s*/, '').trim() ?? '';
+        if (!condition) {
+          const nextConditionLine = normalizeBattleLine(selectedLines[lineIndex + 1] ?? '');
+          condition = nextConditionLine.match(/^[・･]\s*(.+)$/)?.[1]?.trim() ?? '';
+          if (condition) lineIndex++;
+        }
+        if (!condition) throw new Error(`敗北条件${defeatConditionCommand[1]} の後に条件文がありません。`);
+        if (defeatConditionCommand[1] === '追加') {
+          if (!defeatConditions.includes(condition)) defeatConditions.push(condition);
+        } else {
+          defeatConditions = defeatConditions.filter((entry) => entry !== condition);
+        }
+        renderBattleConditions();
       } else if (movementGoalCommand) {
         const id = normalizeUnitId(movementGoalCommand[1]);
         const unit = units.find((candidate) => candidate.id === id);
@@ -3857,6 +3921,10 @@
   }
 
   async function applyBattleSetup(source) {
+    const parsedConditions = parseBattleConditions(source);
+    victoryConditions = parsedConditions.victory;
+    defeatConditions = parsedConditions.defeat;
+    renderBattleConditions();
     const titleLine = source.replace(/\r/g, '').split('\n')
       .find((line) => /^タイトル\s*[:：]/.test(line.normalize('NFKC').trim()));
     const title = titleLine?.trim().replace(/^タイトル\s*[:：]\s*/, '').trim();
@@ -4669,6 +4737,8 @@
         stageClearConfirmed: battleStageClearConfirmed,
         turnCounts: { ...sideTurnCounts },
         completedEvents: [...completedBattleEvents],
+        victoryConditions: [...victoryConditions],
+        defeatConditions: [...defeatConditions],
         counters: Object.fromEntries(battleCounters),
         cursor: { ...cursor },
         camera: { ...camera },
@@ -4745,6 +4815,13 @@
       completedBattleEvents.clear();
       battleCounters.clear();
       for (const eventName of snapshot.battle.completedEvents ?? []) completedBattleEvents.add(eventName);
+      victoryConditions = Array.isArray(snapshot.battle.victoryConditions)
+        ? snapshot.battle.victoryConditions.filter((condition) => typeof condition === 'string')
+        : [...victoryConditions];
+      defeatConditions = Array.isArray(snapshot.battle.defeatConditions)
+        ? snapshot.battle.defeatConditions.filter((condition) => typeof condition === 'string')
+        : [...defeatConditions];
+      renderBattleConditions();
       for (const [key, value] of Object.entries(snapshot.battle.counters ?? {})) battleCounters.set(key, Number(value) || 0);
       playerRoster = snapshot.common.playerRoster ?? [];
       customPoints = Number.isFinite(snapshot.common.customPoints) ? snapshot.common.customPoints : 0;

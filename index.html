@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Robot＿SLG（仮）</title>
-    <link rel="stylesheet" href="style.css?v=20261025-stage4-map-preview">
+    <link rel="stylesheet" href="style.css?v=20261101-battle-conditions">
   </head>
   <body>
     <button id="audio-start-screen" class="audio-start-screen" type="button">Please click to Game Start</button>
@@ -191,7 +191,9 @@
           </div>
         </div>
       </section>
-      <section id="battle-message-panel" class="battle-message-panel" aria-label="戦闘イベントメッセージ" hidden></section>
+      <section id="battle-message-panel" class="battle-message-panel" aria-label="戦闘イベントメッセージ" hidden>
+        <div id="battle-condition-panel" class="battle-condition-panel" aria-live="polite" hidden></div>
+      </section>
       <div id="touch-controls" class="touch-controls" hidden>
         <button id="cancel-action" type="button">キャンセル / 戻る</button>
       </div>
@@ -207,6 +209,6 @@
         <button type="button" data-action="close-game-rules">閉じる</button>
       </div>
     </section>
-    <script src="game.js?v=20261031-object-defeat-presentation"></script>
+    <script src="game.js?v=20261101-battle-conditions"></script>
   </body>
 </html>

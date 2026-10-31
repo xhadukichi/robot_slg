@@ -150,6 +150,22 @@ body {
   margin: 0 0 18px;
 }
 .battle-message-panel[hidden] { display: block; visibility: hidden; pointer-events: none; }
+.battle-condition-panel {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+  padding: 10px 14px;
+  border: 1px solid rgba(219, 224, 226, .45);
+  border-radius: 5px;
+  background: linear-gradient(120deg, rgba(8, 13, 18, .88), rgba(12, 20, 26, .76));
+  color: #f4f1e8;
+  font: 500 clamp(12px, 1.35vw, 15px)/1.55 "Yu Gothic UI", Meiryo, sans-serif;
+}
+.battle-condition-panel[hidden] { display: none; }
+.battle-condition-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.battle-condition-group h2 { margin: 0 0 4px; color: #f1d978; font-size: 1em; }
+.battle-condition-group ul { margin: 0; padding-left: 1.5em; }
+.battle-condition-group li { padding-left: .15em; }
 .battle-message-panel .story-window { position: relative; inset: auto; width: 100%; height: 100%; max-height: none; margin: 0; padding-top: 8px; padding-bottom: 6px; }
 .battle-message-panel .battle-message-layout { display: flex; align-items: flex-end; gap: var(--portrait-gap); }
 .battle-message-panel .battle-message-content { display: flex; min-width: 0; flex: 1; flex-direction: column; }
@@ -229,6 +245,8 @@ body {
 @media (max-width: 600px) {
   .battle-message-panel { --portrait-width: min(100px, 30vw); --portrait-gap: 10px; }
   .battle-message-panel { height: clamp(150px, 28vw, 175px); }
+  .battle-condition-panel { padding: 7px 10px; }
+  .battle-condition-columns { grid-template-columns: 1fr; gap: 6px; }
   .battle-message-panel .story-portrait { height: min(113px, 34vw); }
   .intro-event.custom-macro-message { --portrait-width: min(100px, 30vw); --portrait-gap: 10px; }
   .intro-event.custom-macro-message .story-window { height: clamp(150px, 28vw, 175px); }
