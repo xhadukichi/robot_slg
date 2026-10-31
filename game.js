@@ -57,6 +57,9 @@
   const phaseAnnouncement = document.querySelector('#phase-announcement');
   const gameResult = document.querySelector('#game-result');
   const gameResultMessage = document.querySelector('#game-result-message');
+  const gameResultRewards = document.querySelector('#game-result-rewards');
+  const gameResultGrowthBonus = document.querySelector('#game-result-growth-bonus');
+  const gameResultFundsPaid = document.querySelector('#game-result-funds-paid');
   const gameOverOptions = document.querySelector('#game-over-options');
   const touchControls = document.querySelector('#touch-controls');
   const cancelActionButton = document.querySelector('#cancel-action');
@@ -165,6 +168,7 @@
   let battleEndEvent = null;
   let victoryConditions = [];
   let defeatConditions = [];
+  let showClearedConditionPanel = false;
   let battleTimeEvents = new Map();
   let battleMovementEvents = new Map();
   let battleGroupMovementEvents = [];
@@ -405,6 +409,8 @@
   let customPoints = 0;
   let customFunds = 0;
   let battleFundsEarned = 0;
+  let stageClearGrowthBonus = 0;
+  let stageClearFundsPaid = 0;
   let battleStageClearConfirmed = false;
   let customGrowthCosts = new Map();
   let customPreviewGrowthPoints = 0;
@@ -2867,6 +2873,9 @@
     window.clearTimeout(phaseAnnouncementTimer);
     pendingPrecisionTarget = null;
     battleFundsEarned = 0;
+    stageClearGrowthBonus = 0;
+    stageClearFundsPaid = 0;
+    showClearedConditionPanel = false;
     battleStageClearConfirmed = false;
     if (cameraFrame) cancelAnimationFrame(cameraFrame);
     cameraFrame = 0;
@@ -2920,8 +2929,9 @@
     touchControls.hidden = true;
     gameResult.hidden = true;
     gameResultMessage.textContent = '';
+    gameResultRewards.hidden = true;
     gameOverOptions.hidden = true;
-    gameResult.classList.remove('fade-out', 'show-next', 'show-game-over-options');
+    gameResult.classList.remove('fade-out', 'show-next', 'show-game-over-options', 'show-clear-rewards');
     updatePhaseLabel();
     draw();
   }
@@ -3004,6 +3014,9 @@
   async function loadBattleOpening(stageId = currentStageId, initialEventFlags = []) {
     currentStageId = String(stageId).padStart(3, '0');
     battleFundsEarned = 0;
+    stageClearGrowthBonus = 0;
+    stageClearFundsPaid = 0;
+    showClearedConditionPanel = false;
     battleStageClearConfirmed = false;
     bgmManuallyStopped = false;
     bgmStartDeferredUntilPhaseAnnouncement = false;
@@ -3157,7 +3170,7 @@
   function renderBattleConditions() {
     const hasConditions = victoryConditions.length > 0 || defeatConditions.length > 0;
     battleConditionPanel.replaceChildren();
-    if (hasConditions) {
+    if (hasConditions && !showClearedConditionPanel) {
       const columns = document.createElement('div');
       columns.className = 'battle-condition-columns';
       for (const [title, conditions] of [['勝利条件', victoryConditions], ['敗北条件', defeatConditions]]) {
@@ -3177,8 +3190,8 @@
       }
       battleConditionPanel.append(columns);
     }
-    battleConditionPanel.hidden = stagePreviewMode || battleEventActive || !hasConditions;
-    battleMessagePanel.hidden = stagePreviewMode || (!battleEventActive && !hasConditions);
+    battleConditionPanel.hidden = stagePreviewMode || battleEventActive || (!hasConditions && !showClearedConditionPanel);
+    battleMessagePanel.hidden = stagePreviewMode || (!battleEventActive && !hasConditions && !showClearedConditionPanel);
   }
 
   let activeBattleSpeaker = '';
@@ -3613,6 +3626,11 @@
 
       await flushMessages();
       if (clearCommand) {
+        const upcomingGrowthBonus = selectedLines.slice(lineIndex + 1)
+          .map((candidate) => normalizeBattleLine(candidate).match(/^成長ポイント\s*\+\s*(\d+)$/)?.[1])
+          .find((value) => value !== undefined);
+        stageClearGrowthBonus = Number(upcomingGrowthBonus ?? 0);
+        stageClearFundsPaid = battleFundsEarned;
         finishGame('ステージクリア');
         await new Promise((resolve) => { battleEndContinueResolve = resolve; });
         battleStageClearConfirmed = true;
@@ -6025,11 +6043,20 @@
     turnConfirm.hidden = true;
     rangeMode = null;
     gameResultMessage.textContent = message;
+    const isStageClear = message === '\u30b9\u30c6\u30fc\u30b8\u30af\u30ea\u30a2';
+    showClearedConditionPanel = isStageClear;
+    renderBattleConditions();
+    gameResult.classList.toggle('show-clear-rewards', isStageClear);
+    gameResultRewards.hidden = !isStageClear;
+    if (isStageClear) {
+      gameResultGrowthBonus.textContent = `＋${stageClearGrowthBonus}`;
+      gameResultFundsPaid.textContent = `＋${stageClearFundsPaid}`;
+    }
     gameOverOptions.hidden = true;
     gameOverOptionsReady = false;
     gameResult.classList.remove('fade-out', 'show-next', 'show-game-over-options');
     gameResult.hidden = false;
-    if (message === '\u30b9\u30c6\u30fc\u30b8\u30af\u30ea\u30a2') {
+    if (isStageClear) {
       clearPromptReady = false;
       window.setTimeout(() => {
         if (gameResult.hidden) return;

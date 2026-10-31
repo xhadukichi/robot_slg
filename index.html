@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Robot＿SLG（仮）</title>
-    <link rel="stylesheet" href="style.css?v=20261101-battle-conditions">
+    <link rel="stylesheet" href="style.css?v=20261101-clear-rewards">
   </head>
   <body>
     <button id="audio-start-screen" class="audio-start-screen" type="button">Please click to Game Start</button>
@@ -177,6 +177,10 @@
         <div id="phase-announcement" class="phase-announcement" role="status" aria-live="polite" hidden></div>
         <div id="game-result" class="game-result" role="alert" aria-live="assertive" hidden>
           <div id="game-result-message" class="game-result-message"></div>
+          <div id="game-result-rewards" class="game-result-rewards" hidden>
+            <p>成長ポイントボーナス <strong id="game-result-growth-bonus"></strong></p>
+            <p>軍資金　支払額 <strong id="game-result-funds-paid"></strong></p>
+          </div>
           <div id="game-over-options" class="game-over-options" hidden>
             <button type="button" data-game-over-action="retry">Try Again</button>
             <button type="button" data-game-over-action="load">Load Data</button>
@@ -209,6 +213,6 @@
         <button type="button" data-action="close-game-rules">閉じる</button>
       </div>
     </section>
-    <script src="game.js?v=20261101-battle-conditions"></script>
+    <script src="game.js?v=20261101-clear-rewards"></script>
   </body>
 </html>
