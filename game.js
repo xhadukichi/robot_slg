@@ -435,7 +435,7 @@
   let weaponParameters = new Map();
   let armorParameters = new Map();
   let itemParameters = new Map();
-  let phaseBgmFiles = { player: 'M002_PC_turn.mp3', enemy: 'M003_EN_turn.mp3' };
+  let phaseBgmFiles = { player: 'M002_PC_turn.mp3', enemy: 'M003_EN_turn.mp3', npc: 'M003_EN_turn.mp3' };
   explosionImage.src = 'Unit/Bomb_out.png';
   explosionImage.addEventListener('load', draw);
   for (const unit of units) {
@@ -549,7 +549,7 @@
       return mapX >= unit.x && mapX < unit.x + widthInTiles &&
         mapY >= unit.y && mapY < unit.y + heightInTiles;
     });
-    const clickedObstacle = obstacles.find((obstacle) => obstacle.x === mapX && obstacle.y === mapY);
+    const clickedObstacle = getObstacleAtPosition(mapX, mapY);
     if (rangeMode === 'move-confirm') return;
     const clickedDuringAction = rangeMode !== null;
     if (rangeMode === 'precision-target') {
@@ -578,8 +578,7 @@
       cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
       cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
       if (clickedObstacle?.destructible) {
-        if (isWithinAttackRange(selectedUnit, distanceFromUnitToTile(selectedUnit, mapX, mapY)) &&
-            hasLineOfSight(selectedUnit, clickedObstacle, clickedObstacle)) {
+        if (canAttackObstacleTarget(selectedUnit, clickedObstacle)) {
           void tryAttackObstacle(clickedObstacle);
         }
         scrollToCursor();
@@ -816,6 +815,17 @@
       if (writeSaveGame(slotIndex)) {
         saveSlotStatus.textContent = `データ ${String(slotIndex + 1).padStart(2, '0')} にセーブしました。`;
         renderSaveSlots();
+        if (saveListReturnToStory && saveListContinueAfterClose) {
+          const next = currentEventGoto;
+          currentEventGoto = '';
+          saveSlotDialog.hidden = true;
+          saveListReturnToStory = false;
+          saveListContinueAfterClose = false;
+          restoreSaveSlotDialogParent();
+          if (next) void followEventGoto(next);
+          else if (isClearStory) void returnToTitle();
+          else void loadBattleOpening(currentStageId);
+        }
       } else {
         saveSlotStatus.textContent = 'セーブ情報を保存できませんでした。';
       }
@@ -1991,7 +2001,11 @@
         ['Battle_003', 'EVENT_004 OP'],
         ['Battle_002', 'EVENT_003 OP'],
       ];
-      customMacroPostGoto = nextStageTargets.find(([flag]) => eventFlags.has(flag))?.[1] ?? '';
+      const clearedStageNumber = Number(currentStageId);
+      const nextStageFromStory = isClearStory && Number.isInteger(clearedStageNumber) && clearedStageNumber > 0
+        ? `EVENT_${String(clearedStageNumber + 1).padStart(3, '0')} OP`
+        : '';
+      customMacroPostGoto = nextStageFromStory || nextStageTargets.find(([flag]) => eventFlags.has(flag))?.[1] || '';
       customMacroActive = customMacroMessages.length > 0;
       if (customMacroActive) await showCustomMacroMessage(0);
       else {
@@ -3796,7 +3810,7 @@
     } else if (!mapBackground.naturalWidth) {
       throw new Error(`マップ画像を読み込めません: ${mapFile}`);
     }
-    const coordinatePattern = /^\s*(PC\d+|EN\d+|OBJ\d+)\s*:\s*(.+?)(?:\s*:\s*(type_[\w-]+))?\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*(?::\s*HP\s*(\d+)|\s+HP\s*(\d+))?\s*$/i;
+    const coordinatePattern = /^\s*(PC\d+|EN\d+|OBJ\d+)\s*:\s*(.+?)(?:\s*:\s*(type_[\w-]+))?\s*[（(]\s*(\d+)\s*[,，]\s*(\d+)\s*[）)]\s*(?::\s*HP\s*(\d+)|\s+HP\s*(\d+))?\s*(?:サイズ\s*(\d+))?\s*(?:\s*:\s*属性\s*([\w-]+))?\s*$/i;
     units.splice(0, units.length, ...unitTemplates.map((unit) => ({ ...unit, image: new Image() })));
     const playerTemplate = unitTemplates.find((unit) => unit.side === 'player');
     if (carriedPlayerLoadouts.size && !playerTemplate) throw new Error('プレイヤーユニットの初期テンプレートがありません。');
@@ -3871,14 +3885,26 @@
     for (const line of setupLines) {
       const match = line.normalize('NFKC').match(coordinatePattern);
       if (!match) continue;
-      const [, id, imageFile, parameterTypeId, x, y, hpWithColon, hpWithSpace] = match;
+      const [, id, imageFile, parameterTypeId, x, y, hpWithColon, hpWithSpace, obstacleSizeText, obstacleAttribute] = match;
       const position = { x: Number(x) - 1, y: Number(y) - 1 };
       if (id.startsWith('OBJ')) {
         const objectHp = hpWithColon ?? hpWithSpace;
         const destructible = objectHp !== undefined;
+        const size = Number(obstacleSizeText) || 1;
+        const widthInTiles = size === 2 || size === 4 ? 2 : 1;
+        const heightInTiles = size === 4 ? 2 : 1;
+        // Object coordinates use the same left-bottom anchor as multi-tile units.
+        position.y -= heightInTiles - 1;
+        if (position.x < 0 || position.y < 0 ||
+            position.x + widthInTiles > MAP_WIDTH || position.y + heightInTiles > MAP_HEIGHT) {
+          throw new Error(`${id} (${Number(x)},${Number(y)}) のサイズ ${size} がマップ範囲外です。`);
+        }
         configuredObstacles.push({
           id,
           ...position,
+          spriteWidth: widthInTiles * TILE_SIZE,
+          spriteHeight: heightInTiles * TILE_SIZE,
+          ...(obstacleAttribute ? { attribute: obstacleAttribute.toUpperCase() } : {}),
           ...(destructible ? { hp: Number(objectHp), maxHp: Number(objectHp), destructible: true } : {}),
           imageFile: imageFile.trim(),
           image: new Image(),
@@ -4312,11 +4338,12 @@
   }
 
   function parsePhaseBgm(source) {
-    const result = { player: 'M002_PC_turn.mp3', enemy: 'M003_EN_turn.mp3' };
+    const result = { player: 'M002_PC_turn.mp3', enemy: 'M003_EN_turn.mp3', npc: 'M003_EN_turn.mp3' };
     for (const rawLine of tryExtractEventBlock(source, '\uff22\uff27\uff2d')) {
-      const match = rawLine.normalize('NFKC').trim().match(/^(PC|EN)\s*:\s*(\S+)$/i);
+      const match = rawLine.normalize('NFKC').trim().match(/^(PC|EN|NPC)\s*:\s*(\S+)$/i);
       if (!match) continue;
-      result[match[1].toUpperCase() === 'PC' ? 'player' : 'enemy'] = match[2];
+      const side = match[1].toUpperCase();
+      result[side === 'PC' ? 'player' : side === 'EN' ? 'enemy' : 'npc'] = match[2];
     }
     return result;
   }
@@ -4594,7 +4621,11 @@
       currentSide = snapshot.battle.phase === 'enemy' ? 'enemy' : 'player';
       sideTurnCounts.player = Math.max(1, Number(snapshot.battle.turnCounts?.player) || 1);
       sideTurnCounts.enemy = Math.max(1, Number(snapshot.battle.turnCounts?.enemy) || 1);
-      phaseBgmFiles = snapshot.battle.phaseBgmFiles ?? phaseBgmFiles;
+      phaseBgmFiles = {
+        ...phaseBgmFiles,
+        ...(snapshot.battle.phaseBgmFiles ?? {}),
+        npc: snapshot.battle.phaseBgmFiles?.npc ?? phaseBgmFiles.npc ?? phaseBgmFiles.enemy,
+      };
       cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, Number(snapshot.battle.cursor?.x) || 0));
       cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, Number(snapshot.battle.cursor?.y) || 0));
       const maxCameraX = Math.max(0, MAP_WIDTH - VIEW_WIDTH);
@@ -4867,17 +4898,6 @@
       if (!isGameOver) await wait(350);
     }
 
-    if (!debugMode && !isGameOver && currentSide === 'enemy') {
-      try {
-        await runNpcMovementGoals();
-      } catch (error) {
-        console.error('NPC移動イベントでエラーが発生しました。', error);
-        showAttackMessage(`NPC移動イベントエラー: ${error.message || error}`, 15000);
-        enemyRangePreview = null;
-        draw();
-      }
-    }
-
     const remainingEnemyActions = units.some((unit) => unit.side === 'enemy' && !unit.ended);
     if (!debugMode && !isGameOver && currentSide === 'enemy' && !remainingEnemyActions) {
       phaseAnnouncement.textContent = 'エネミーターン終了！';
@@ -4885,23 +4905,40 @@
       fadeOutBgm();
       window.clearTimeout(phaseAnnouncementTimer);
       await wait(1000);
+      phaseAnnouncement.hidden = true;
 
-      sideTurnCounts.enemy++;
-      currentSide = 'player';
-      for (const unit of units) {
-        if (unit.side === currentSide) {
-          unit.moveUsed = false;
-          unit.moveRemaining = unit.moveRange;
-          unit.precisionAttackBonus = 0;
-          unit.attackUsed = false;
-          unit.ended = false;
+      if (!isGameOver && currentSide === 'enemy') {
+        try {
+          await runNpcMovementGoals();
+        } catch (error) {
+          console.error('NPC移動イベントでエラーが発生しました。', error);
+          showAttackMessage(`NPC移動イベントエラー: ${error.message || error}`, 15000);
+          enemyRangePreview = null;
+          draw();
         }
       }
-      moveCursorToNextPlayerUnit();
-      updatePhaseLabel();
-      announceCurrentTurn();
-      playPhaseBgm();
-      await runBattleTimeEvents();
+
+      const remainingEnemyActionsAfterNpc = units.some((unit) => unit.side === 'enemy' && !unit.ended);
+      if (!isGameOver && currentSide === 'enemy' && !remainingEnemyActionsAfterNpc) {
+        sideTurnCounts.enemy++;
+        currentSide = 'player';
+        for (const unit of units) {
+          if (unit.side === currentSide) {
+            unit.moveUsed = false;
+            unit.moveRemaining = unit.moveRange;
+            unit.precisionAttackBonus = 0;
+            unit.attackUsed = false;
+            unit.ended = false;
+          }
+        }
+        moveCursorToNextPlayerUnit();
+        updatePhaseLabel();
+        announceCurrentTurn();
+        playPhaseBgm();
+        draw();
+        canvas.focus();
+        await runBattleTimeEvents();
+      }
     }
 
     isEnemyAiRunning = false;
@@ -4934,6 +4971,7 @@
       if (safeStopIndex < 1) continue;
       movementPath.length = safeStopIndex + 1;
 
+      setBgm(phaseBgmFiles.npc);
       cursor.x = npc.x;
       cursor.y = npc.y;
       scrollToCursor();
@@ -4973,7 +5011,11 @@
       if (!goalKeys.size) return [];
       const previous = new Map([[startKey, null]]);
       const queue = [{ x: unit.x, y: unit.y }];
-      const reachedGoal = () => [...goalKeys].find((goalKey) => previous.has(goalKey));
+      const reachedGoal = () => [...goalKeys].find((goalKey) => {
+        if (!previous.has(goalKey)) return false;
+        const [x, y] = goalKey.split(',').map(Number);
+        return !isUnitPositionBlocked(unit, x, y);
+      });
       const isBlocked = (x, y) => {
         if (x < 0 || y < 0 || x + footprint.width > MAP_WIDTH || y + footprint.height > MAP_HEIGHT) return true;
         for (let tileY = y; tileY < y + footprint.height; tileY++) {
@@ -4985,10 +5027,13 @@
         const overlaps = (otherX, otherY, otherWidth, otherHeight) =>
           x < otherX + otherWidth && x + footprint.width > otherX &&
           y < otherY + otherHeight && y + footprint.height > otherY;
-        if (obstacles.some((obstacle) => overlaps(obstacle.x, obstacle.y, 1, 1) &&
-            !(allowDestructibleObjects && obstacle.destructible))) return true;
+        if (obstacles.some((obstacle) => {
+          const obstacleSize = getFootprintSize(obstacle);
+          return overlaps(obstacle.x, obstacle.y, obstacleSize.width, obstacleSize.height) &&
+            !(allowDestructibleObjects && obstacle.destructible);
+        })) return true;
         return units.some((other) => {
-          if (other === unit) return false;
+          if (other === unit || canPassThroughUnit(unit, other)) return false;
           const otherSize = getFootprintSize(other);
           return overlaps(other.x, other.y, otherSize.width, otherSize.height);
         });
@@ -5023,9 +5068,12 @@
     if (!plannedPath.length) return [];
     const footprint = getFootprintSize(unit);
     const firstObjectStep = plannedPath.findIndex((position, index) => index > 0 &&
-      obstacles.some((obstacle) => obstacle.destructible &&
-        position.x < obstacle.x + 1 && position.x + footprint.width > obstacle.x &&
-        position.y < obstacle.y + 1 && position.y + footprint.height > obstacle.y));
+      obstacles.some((obstacle) => {
+        const obstacleSize = getFootprintSize(obstacle);
+        return obstacle.destructible &&
+          position.x < obstacle.x + obstacleSize.width && position.x + footprint.width > obstacle.x &&
+          position.y < obstacle.y + obstacleSize.height && position.y + footprint.height > obstacle.y;
+      }));
     return firstObjectStep > 0 ? plannedPath.slice(0, firstObjectStep) : [];
   }
 
@@ -5084,9 +5132,17 @@
   }
 
   function canAttackObstacleTarget(attacker, obstacle) {
-    return Boolean(attacker && obstacle?.destructible && obstacles.includes(obstacle) &&
-      isWithinAttackRange(attacker, distanceFromUnitToTile(attacker, obstacle.x, obstacle.y)) &&
-      hasLineOfSight(attacker, obstacle, obstacle));
+    if (!attacker || !obstacle?.destructible || !obstacles.includes(obstacle) ||
+        (attacker.side === 'player' && obstacle.attribute === 'NPC')) return false;
+    const footprint = getFootprintSize(obstacle);
+    for (let row = 0; row < footprint.height; row++) {
+      for (let column = 0; column < footprint.width; column++) {
+        const tile = { x: obstacle.x + column, y: obstacle.y + row };
+        if (isWithinAttackRange(attacker, distanceFromUnitToTile(attacker, tile.x, tile.y)) &&
+            hasLineOfSight(attacker, tile, obstacle)) return true;
+      }
+    }
+    return false;
   }
 
   function unitOccupiesTile(unit, x, y) {
@@ -5132,10 +5188,8 @@
       // Neither unit's occupied endpoint tile is between the shooter and target.
       if ((x === from.x && y === from.y) || (x === to.x && y === to.y)) continue;
       // OBJ is drawn over the base terrain, so its rule takes precedence until it is destroyed.
-      const obstacle = obstacles.find((candidate) =>
-        candidate.x === x && candidate.y === y && candidate !== targetObstacle
-      );
-      if (obstacle) return obstacle;
+      const obstacle = getObstacleAtPosition(x, y);
+      if (obstacle && obstacle !== targetObstacle) return obstacle;
       if (lineOfSightBlockedTiles.has(`${x},${y}`)) return { x, y, destructible: false, terrain: 'rock' };
     }
     return null;
@@ -5245,7 +5299,7 @@
       if (unit?.side === 'enemy' && canAttackUnitTarget(selectedUnit, unit)) {
         showPrecisionConfirmation(unit);
       } else {
-        const obstacle = obstacles.find((candidate) => candidate.x === cursor.x && candidate.y === cursor.y);
+        const obstacle = getObstacleAtPosition(cursor.x, cursor.y);
         if (canAttackObstacleTarget(selectedUnit, obstacle)) showPrecisionConfirmation(obstacle);
       }
       return;
@@ -5259,10 +5313,9 @@
         commitPendingMove();
         return;
       }
-      const obstacle = obstacles.find((candidate) => candidate.x === cursor.x && candidate.y === cursor.y);
+      const obstacle = getObstacleAtPosition(cursor.x, cursor.y);
       if (obstacle?.destructible &&
-          isWithinAttackRange(selectedUnit, distanceFromUnitToTile(selectedUnit, obstacle.x, obstacle.y)) &&
-          hasLineOfSight(selectedUnit, obstacle, obstacle)) {
+          canAttackObstacleTarget(selectedUnit, obstacle)) {
         void tryAttackObstacle(obstacle);
       } else if (unit) tryAttackTarget(unit);
       return;
@@ -5364,17 +5417,16 @@
 
   async function tryAttackObstacle(obstacle) {
     if (!selectedUnit || rangeMode !== 'attack' || !obstacle.destructible ||
-        !obstacles.includes(obstacle) ||
-        !isWithinAttackRange(selectedUnit, distanceFromUnitToTile(selectedUnit, obstacle.x, obstacle.y)) ||
-        !hasLineOfSight(selectedUnit, obstacle, obstacle)) return false;
+        !obstacles.includes(obstacle) || !canAttackObstacleTarget(selectedUnit, obstacle)) return false;
 
     const attacker = selectedUnit;
     isCombatResolving = true;
     combatTarget = obstacle;
     pendingMove = null;
     rangeMode = null;
+    const obstacleFootprint = getFootprintSize(obstacle);
     cursor.x = obstacle.x;
-    cursor.y = obstacle.y;
+    cursor.y = obstacle.y + obstacleFootprint.height - 1;
     try {
       attacker.attackUsed = true;
       await jumpUnit(attacker);
@@ -5703,7 +5755,8 @@
   function enterAttackModeIfTargetInRange(unit) {
     if ((unit.side !== currentSide && !(debugMode && unit.side === 'enemy')) || unit.ended || unit.attackUsed) return false;
     const targetInRange = units.some((target) =>
-      target.side !== unit.side && canAttackUnitTarget(unit, target)
+      target.side !== unit.side && (unit.side !== 'player' || target.side === 'enemy') &&
+        canAttackUnitTarget(unit, target)
     ) || obstacles.some((obstacle) => canAttackObstacleTarget(unit, obstacle));
     if (!targetInRange) return false;
 
@@ -5934,6 +5987,14 @@
     };
   }
 
+  function getObstacleAtPosition(x, y) {
+    return obstacles.find((obstacle) => {
+      const footprint = getFootprintSize(obstacle);
+      return x >= obstacle.x && x < obstacle.x + footprint.width &&
+        y >= obstacle.y && y < obstacle.y + footprint.height;
+    }) ?? null;
+  }
+
   function getUnitAtPosition(x, y) {
     return [...units].reverse().find((unit) => {
       const footprint = getFootprintSize(unit);
@@ -5982,7 +6043,10 @@
     const overlaps = (otherX, otherY, otherWidth, otherHeight) =>
       x < otherX + otherWidth && x + width > otherX &&
       y < otherY + otherHeight && y + height > otherY;
-    if (obstacles.some((obstacle) => overlaps(obstacle.x, obstacle.y, 1, 1))) return true;
+    if (obstacles.some((obstacle) => {
+      const footprint = getFootprintSize(obstacle);
+      return overlaps(obstacle.x, obstacle.y, footprint.width, footprint.height);
+    })) return true;
     return units.some((other) => {
       if (other === unit) return false;
       if (allowFriendlyTransit && canPassThroughUnit(unit, other)) return false;
@@ -6035,7 +6099,7 @@
   }
 
   function isObstacleAt(x, y) {
-    return obstacles.some((obstacle) => obstacle.x === x && obstacle.y === y);
+    return getObstacleAtPosition(x, y) !== null;
   }
 
   function animateUnitMove(unit, path, onComplete = null) {
@@ -6295,11 +6359,11 @@
         }
         const inMoveRange = moveRangeTiles?.has(`${mapX},${mapY}`);
         const attackDistance = attackRangeUnit ? distanceFromUnitToTile(attackRangeUnit, mapX, mapY) : 0;
-        const blockingTerrainTarget = lineOfSightBlockedTiles.has(`${mapX},${mapY}`) &&
-          !obstacles.some((obstacle) => obstacle.x === mapX && obstacle.y === mapY);
+        const obstacleAtTile = getObstacleAtPosition(mapX, mapY);
+        const blockingTerrainTarget = lineOfSightBlockedTiles.has(`${mapX},${mapY}`) && !obstacleAtTile;
         const inAttackRange = attackRangeUnit && isWithinAttackRange(attackRangeUnit, attackDistance) &&
           !blockingTerrainTarget &&
-          hasLineOfSight(attackRangeUnit, { x: mapX, y: mapY });
+          hasLineOfSight(attackRangeUnit, { x: mapX, y: mapY }, obstacleAtTile);
         const inHateRange = hateRangeUnit && distanceFromUnitToTile(hateRangeUnit, mapX, mapY) <= 8;
         if (inMoveRange || inAttackRange || inHateRange) {
           ctx.globalAlpha = previewAlpha;
@@ -6323,23 +6387,28 @@
 
     // Draw obstacles first so units remain visible if a tile is shared accidentally.
     for (const obstacle of obstacles) {
+      const footprint = getFootprintSize(obstacle);
+      const obstacleWidth = footprint.width * TILE_SIZE;
+      const obstacleHeight = footprint.height * TILE_SIZE;
       if (obstacle.image.complete && obstacle.image.naturalWidth > 0 &&
-          obstacle.x >= camera.x && obstacle.x < camera.x + VIEW_WIDTH &&
-          obstacle.y >= camera.y && obstacle.y < camera.y + VIEW_HEIGHT) {
+          obstacle.x + footprint.width > camera.x && obstacle.x < camera.x + VIEW_WIDTH &&
+          obstacle.y + footprint.height > camera.y && obstacle.y < camera.y + VIEW_HEIGHT) {
         const screenX = (obstacle.x - camera.x) * TILE_SIZE + (obstacle.visualOffsetX ?? 0);
         const screenY = (obstacle.y - camera.y) * TILE_SIZE;
-        ctx.drawImage(obstacle.image, screenX, screenY, TILE_SIZE, TILE_SIZE);
+        ctx.drawImage(obstacle.image, screenX, screenY, obstacleWidth, obstacleHeight);
         if (obstacle.destructible) {
+          const badgeX = screenX + obstacleWidth / 2 - 16;
+          const badgeY = screenY + obstacleHeight - 20;
           ctx.fillStyle = '#101510e8';
-          ctx.fillRect(screenX + TILE_SIZE - 30, screenY + TILE_SIZE - 19, 28, 16);
+          ctx.fillRect(badgeX, badgeY, 32, 17);
           ctx.strokeStyle = '#d6d2a4';
           ctx.lineWidth = 1;
-          ctx.strokeRect(screenX + TILE_SIZE - 30, screenY + TILE_SIZE - 19, 28, 16);
+          ctx.strokeRect(badgeX, badgeY, 32, 17);
           ctx.fillStyle = '#f0f2dc';
           ctx.font = '11px Consolas, monospace';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(String(obstacle.hpDisplayOverride ?? obstacle.hp), screenX + TILE_SIZE - 16, screenY + TILE_SIZE - 11);
+          ctx.fillText(String(obstacle.hpDisplayOverride ?? obstacle.hp), badgeX + 16, badgeY + 8.5);
         }
       }
     }
