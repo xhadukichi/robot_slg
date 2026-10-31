@@ -50,7 +50,7 @@
 		EN08
 		｛
 			EN08.png
-			Type_EN_006A
+			Type_EN_006
 			Type_WEP_102
 		｝
 		EN09
@@ -136,7 +136,7 @@
 	｝
 	オブジェ
 	｛
-		OBJ01:shutter.png(8,4):HP25　サイズ　４:属性　NPC
+		OBJ01:shutter.png(8,4):HP30　サイズ　４:属性　NPC
 
 	｝
 	地形

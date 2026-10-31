@@ -3777,7 +3777,17 @@
     return true;
   }
 
-  async function runBattleObjectDefeatEvent() {
+  async function runBattleObjectDefeatEvent(obstacle) {
+    const objectId = normalizeUnitId(obstacle?.id ?? '');
+    const endCondition = battleEndEvent && findBattleConditionBlock(battleEndEvent.lines, objectId);
+    const endEventKey = endCondition ? `${battleEndEvent.name}:${objectId}` : null;
+    if (endCondition && !completedBattleEvents.has(endEventKey)) {
+      completedBattleEvents.add(endEventKey);
+      await playBattleScriptCommands(endCondition.lines);
+      return true;
+    }
+    if (endCondition) return true;
+
     const event = battleObjectDefeatEvent;
     if (!event || completedBattleEvents.has(event.name)) return false;
     completedBattleEvents.add(event.name);
@@ -4972,14 +4982,6 @@
         if (!assignedObstacleTarget && !assignedUnitTarget) enemy.attackTargetId = null;
       }
 
-      if (assignedObstacleTarget) {
-        await runEnemyTurnAgainstObstacle(enemy, assignedObstacleTarget);
-        enemy.ended = true;
-        checkUnitCompletion(enemy);
-        if (!isGameOver) await wait(350);
-        continue;
-      }
-
       let preferredHateTarget = null;
       if (enemy.hateTargetId) {
         preferredHateTarget = units.find((candidate) => candidate.id === enemy.hateTargetId && candidate.side === 'player') ?? null;
@@ -4990,9 +4992,18 @@
           await wait(900);
         }
       }
-      const target = assignedUnitTarget ?? preferredHateTarget ?? findNearestOpponent(enemy);
+
+      if (assignedObstacleTarget && !preferredHateTarget) {
+        await runEnemyTurnAgainstObstacle(enemy, assignedObstacleTarget);
+        enemy.ended = true;
+        checkUnitCompletion(enemy);
+        if (!isGameOver) await wait(350);
+        continue;
+      }
+
+      const target = preferredHateTarget ?? assignedUnitTarget ?? findNearestOpponent(enemy);
       if (target) {
-        let forcedTarget = assignedUnitTarget ?? preferredHateTarget;
+        let forcedTarget = preferredHateTarget ?? assignedUnitTarget;
         let attackTarget = findOpponentInRange(enemy, forcedTarget);
         let obstacleTarget = null;
         let approachTarget = target;
@@ -5028,8 +5039,8 @@
             draw();
             await runBattleMovementEvents();
             if (isGameOver || clearTransitioning || currentSide !== 'enemy') break;
-            const eventTargetIsObstacle = enemy.attackTargetId?.startsWith('OBJ') ?? false;
-            if (enemy.attackTargetId) {
+            const eventTargetIsObstacle = !preferredHateTarget && (enemy.attackTargetId?.startsWith('OBJ') ?? false);
+            if (enemy.attackTargetId && !preferredHateTarget) {
               if (eventTargetIsObstacle) {
                 const eventObstacleTarget = obstacles.find((candidate) => candidate.id === enemy.attackTargetId);
                 obstacleTarget = eventObstacleTarget && canAttackObstacleTarget(enemy, eventObstacleTarget)
@@ -5657,7 +5668,7 @@
         if (obstacle.hp <= 0) {
           obstacles.splice(obstacles.indexOf(obstacle), 1);
           await Promise.all([startExplosion(obstacle), playSe('BreakObj.mp3')]);
-          const eventPlayed = await runBattleObjectDefeatEvent();
+          const eventPlayed = await runBattleObjectDefeatEvent(obstacle);
           if (!eventPlayed) showAttackMessage('障害物が破壊された！', 1800);
         }
       } else {
