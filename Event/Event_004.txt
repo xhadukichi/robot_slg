@@ -46,9 +46,8 @@ Event_004
 		
 		レジスタンスとロボット軍団の戦いは続く…
 	
-		SAVEリスト
 
-		GOTO：Custom
+		GOTO：Inter_004
 	｝
 ｝
 
