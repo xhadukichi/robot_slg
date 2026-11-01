@@ -157,6 +157,7 @@
   let customMacroPostGoto = '';
   let skipStoryReveal = false;
   let battleEventActive = false;
+  let interStoryPresentationActive = false;
   let battleCommandExecutionDepth = 0;
   let battleMessageResolve = null;
   let battleAttackEvents = new Map();
@@ -1980,6 +1981,122 @@
     await revealStoryText();
   }
 
+  function parseInterScript(source, interName) {
+    const lines = tryExtractEventBlock(source, interName);
+    if (!lines.length) throw new Error(`${interName} ブロックがありません。`);
+    const result = { background: '', bgm: '', fadeIn: false, messages: [], saveList: false, goto: '' };
+
+    for (let index = 0; index < lines.length; index++) {
+      const line = normalizeBattleLine(lines[index]);
+      let match = line.match(/^BG\s*:\s*(.+)$/i);
+      if (match) { result.background = match[1].trim(); continue; }
+      match = line.match(/^BGM\s*:\s*(.+)$/i);
+      if (match) { result.bgm = match[1].trim(); continue; }
+      if (line === 'フェードイン') { result.fadeIn = true; continue; }
+      if (/^SAVE(?:\s|[_-]|[^\x00-\x7f])/i.test(line)) { result.saveList = true; continue; }
+      match = line.match(/^GOTO\s*:\s*(.+)$/i);
+      if (match) { result.goto = match[1].trim(); continue; }
+
+      const messageCommand = line.match(/^MES\s+(.+?)\s+((?:PC|EN|NPC)\d+)\s+([YN])$/i);
+      if (!messageCommand) continue;
+      const body = [];
+      for (index++; index < lines.length; index++) {
+        const bodyLine = normalizeBattleLine(lines[index]);
+        if (/^(?:MES\s|GOTO\s*:|BG\s*:|BGM\s*:|フェードイン$)/i.test(bodyLine)
+            || /^SAVE(?:\s|[_-]|[^\x00-\x7f])/i.test(bodyLine)) {
+          index--;
+          break;
+        }
+        if (bodyLine !== '{' && bodyLine !== '}') body.push(lines[index].trim());
+      }
+      const text = body.join('\n').trim().replace(/^「/, '').replace(/」$/, '').trim();
+      if (text) {
+        const unitId = normalizeUnitId(messageCommand[2]);
+        result.messages.push({
+          speaker: messageCommand[1].trim(),
+          systemMessage: false,
+          portraitSource: resolveBustupSource(unitId),
+          text,
+        });
+      }
+    }
+
+    if (!result.messages.length) throw new Error(`${interName} にMES会話がありません。`);
+    return result;
+  }
+
+  async function playInterStory(rawId) {
+    const interId = String(rawId).padStart(3, '0');
+    const interName = `Inter_${interId}`;
+    currentStageId = interId;
+    isClearStory = true;
+    currentEventGoto = '';
+    currentEventSaveList = false;
+    gameShell.hidden = false;
+    customScreen.hidden = true;
+    introEvent.hidden = true;
+    introEvent.classList.remove('fade-out', 'custom-macro-message', 'show-image');
+    introEventImage.after(storyWindow);
+    storyWindow.hidden = true;
+    storyWindow.classList.remove('system-message', 'with-portrait');
+    storySpeaker.textContent = '';
+    setStoryPortrait('', '');
+    storyText.textContent = '';
+    storyStart.disabled = true;
+    try {
+      const script = await loadEventScript(`Event/${interName}.txt`);
+      const inter = parseInterScript(script, interName);
+      if (inter.background) {
+        introEventImage.src = `Unit/${inter.background}`;
+        await waitForImage(introEventImage);
+      }
+      if (inter.bgm) setBgm(inter.bgm);
+      introEvent.hidden = false;
+      if (inter.fadeIn) await fadeInStoryImage();
+      else introEvent.classList.add('show-image');
+      storyWindow.hidden = false;
+      interStoryPresentationActive = true;
+      battleMessagePanel.classList.add('inter-story-panel');
+      try {
+        await playBattleMessages(inter.messages);
+      } finally {
+        interStoryPresentationActive = false;
+        battleMessagePanel.classList.remove('inter-story-panel');
+        closeBattleMessage();
+        storyWindow.hidden = true;
+        introEvent.hidden = true;
+      }
+      if (inter.saveList) {
+        currentEventGoto = inter.goto;
+        currentEventSaveList = true;
+        storyText.textContent = '';
+        storySpeaker.textContent = '';
+        setStoryPortrait('', '');
+        storyStart.textContent = '\u300aContinue\u300b';
+        storyStart.disabled = false;
+        storyWindow.hidden = false;
+        introEvent.hidden = false;
+      } else if (inter.goto) {
+        await followEventGoto(inter.goto);
+      }
+      else await returnToTitle();
+    } catch (error) {
+      console.error(`${interName} を読み込めませんでした。`, error);
+      interStoryPresentationActive = false;
+      battleMessagePanel.classList.remove('inter-story-panel');
+      introEventImage.after(storyWindow);
+      storyWindow.hidden = false;
+      currentStoryText = `${interName} を読み込めませんでした。\n${error.message || error}`;
+      storyText.textContent = currentStoryText;
+      storySpeaker.textContent = '';
+      setStoryPortrait('', '');
+      storyStart.textContent = '《タイトルへ》';
+      storyStart.disabled = false;
+      storySkip.hidden = true;
+      introEvent.hidden = false;
+    }
+  }
+
   function getCustomMacroBlock(lines, openIndex) {
     let depth = 0;
     for (let index = openIndex; index < lines.length; index++) {
@@ -2027,16 +2144,8 @@
     if (!message) return;
     storyWindow.hidden = false;
     customMacroMessageIndex = index;
-    const isSystemMessage = normalizeBattleLine(message.speaker) === 'システムメッセージ';
-    storySpeaker.textContent = isSystemMessage ? '' : message.speaker;
-    storyWindow.classList.toggle('system-message', isSystemMessage);
-    setStoryPortrait(message.portraitSource, message.speaker);
-    currentStoryText = message.text;
-    storyText.textContent = '';
-    storyStart.textContent = '\u300aContinue\u300b';
-    storyStart.disabled = true;
-    storySkip.hidden = true;
-    skipStoryReveal = false;
+    const isSystemMessage = normalizeBattleLine(message.speaker) === '\u30b7\u30b9\u30c6\u30e0\u30e1\u30c3\u30bb\u30fc\u30b8';
+    prepareMesMessage({ ...message, systemMessage: isSystemMessage });
     introEvent.hidden = false;
     introEvent.classList.add('custom-macro-message');
     introEvent.classList.remove('fade-out');
@@ -2119,6 +2228,11 @@
     const normalized = target.normalize('NFKC').trim();
     if (/^CUSTOM$/i.test(normalized)) {
       await startCustomMacro();
+      return;
+    }
+    const interTarget = normalized.match(/^INTER_(\d+)$/i);
+    if (interTarget) {
+      await playInterStory(interTarget[1]);
       return;
     }
     const eventTarget = normalized.match(/^EVENT_(\d+)\s+(.+)$/i);
@@ -3023,6 +3137,7 @@
     else if (currentEventSaveList) {
       currentEventSaveList = false;
       saveListReturnToStory = true;
+      saveListContinueAfterClose = Boolean(currentEventGoto);
       saveSlotDialog.classList.add('floating-save-dialog');
       document.body.append(saveSlotDialog);
       openSaveSlotList('save');
@@ -3176,19 +3291,32 @@
     }
   }
 
+  function prepareMesMessage(message) {
+    const isSystemMessage = Boolean(message.systemMessage);
+    const speaker = isSystemMessage ? '' : (message.speaker ?? '');
+    storySpeaker.textContent = speaker;
+    storyWindow.classList.toggle('system-message', isSystemMessage);
+    setStoryPortrait(message.portraitSource || resolveBustupSource(message.unitId), speaker);
+    currentStoryText = message.text ?? '';
+    storyText.textContent = '';
+    storyStart.textContent = '\u300aContinue\u300b';
+    storyStart.disabled = true;
+    storySkip.hidden = true;
+    skipStoryReveal = false;
+  }
+
   function showBattleMessage(message, unitId = '', portraitReference = '') {
     return new Promise((resolve) => {
       battleMessageResolve = resolve;
       battleEventActive = true;
       renderBattleConditions();
-      currentStoryText = message;
-      storyText.textContent = '';
-      storySpeaker.textContent = activeBattleSpeaker;
-      storyWindow.classList.toggle('system-message', activeBattleSystemMessage);
-      setStoryPortrait(resolveBustupSource(portraitReference) || resolveBustupSource(unitId), activeBattleSpeaker);
-      storyStart.textContent = '\u300aContinue\u300b';
-      storySkip.hidden = true;
-      skipStoryReveal = false;
+      prepareMesMessage({
+        speaker: activeBattleSpeaker,
+        systemMessage: activeBattleSystemMessage,
+        text: message,
+        unitId,
+        portraitSource: resolveBustupSource(portraitReference) || resolveBustupSource(unitId),
+      });
       battleMessagePanel.classList.add('battle-event');
       battleMessagePanel.append(storyWindow);
       battleMessagePanel.hidden = false;
@@ -3200,14 +3328,20 @@
   function closeBattleMessage() {
     battleEventActive = false;
     battleMessagePanel.classList.remove('battle-event');
-    introEventImage.after(storyWindow);
-    renderBattleConditions();
+    if (interStoryPresentationActive) {
+      battleMessagePanel.hidden = false;
+    } else {
+      introEventImage.after(storyWindow);
+      renderBattleConditions();
+    }
     storySkip.hidden = true;
-    storySpeaker.textContent = '';
-    storyPortrait.hidden = true;
-    storyWindow.classList.remove('with-portrait');
-    storyWindow.classList.remove('system-message');
-    storyStart.textContent = '\u300aGame Start\u300b';
+    if (!interStoryPresentationActive) {
+      storySpeaker.textContent = '';
+      storyPortrait.hidden = true;
+      storyWindow.classList.remove('with-portrait');
+      storyWindow.classList.remove('system-message');
+      storyStart.textContent = '\u300aGame Start\u300b';
+    }
     canvas.focus();
     const resolveMessage = battleMessageResolve;
     battleMessageResolve = null;
@@ -3274,7 +3408,7 @@
         }
       }
       activeBattleSpeaker = message.speaker;
-      activeBattleSystemMessage = message.systemMessage;
+      activeBattleSystemMessage = Boolean(message.systemMessage);
       await showBattleMessage(message.text, message.unitId, message.portraitSource);
     }
     activeBattleSpeaker = '';

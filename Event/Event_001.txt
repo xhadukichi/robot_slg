@@ -47,7 +47,7 @@ Event_001
 
 		SAVEリスト
 
-		GOTO：Event_002　ＯＰ
+		GOTO：Inter_001
 	｝
 ｝
 

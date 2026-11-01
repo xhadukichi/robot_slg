@@ -38,8 +38,9 @@ Event_002
 		だがロボット軍団の次の魔の手が迫っていた……
 		
 		SAVEリスト
+		
+		GOTO：Inter_002
 
-		GOTO：Event_003　ＯＰ
 	｝
 ｝
 

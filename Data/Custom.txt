@@ -53,6 +53,10 @@ Custom
 	GOTO：　Custom_Menu
 		セーブ
 
+	ＩＦ　フラグ　Battle_006
+	｛
+		GOTO:Event_007　ＯＰ
+	｝
 	ＩＦ　フラグ　Battle_005
 	｛
 		GOTO:Event_006　ＯＰ
