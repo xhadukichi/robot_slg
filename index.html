@@ -4,10 +4,20 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Robot＿SLG（仮）</title>
-    <link rel="stylesheet" href="style.css?v=20261101-clear-rewards">
+    <link rel="stylesheet" href="style.css?v=20261101-warning-copy">
   </head>
   <body>
-    <button id="audio-start-screen" class="audio-start-screen" type="button">Please click to Game Start</button>
+    <button id="audio-start-screen" class="audio-start-screen" type="button">
+      <span>Please click to Game Start</span>
+      <span class="start-warning">【警告】
+本プロジェクトは鋭意開発中です
+そのため、更新タイミングによっては正常動作しないことがあります。
+その場合は時間をおいて再度お試しください。
+
+また新機能の搭載により、それまでのセーブデータが
+使用できなくなることがあります。
+ご理解のほど、よろしくお願いします。</span>
+    </button>
     <section id="title-screen" class="title-screen" aria-label="タイトル画面">
       <img class="title-background" src="Unit/Title_back.png" alt="" />
       <div class="title-shade" aria-hidden="true"></div>
@@ -213,6 +223,6 @@
         <button type="button" data-action="close-game-rules">閉じる</button>
       </div>
     </section>
-    <script src="game.js?v=20261101-clear-rewards"></script>
+    <script src="game.js?v=20261101-direct-end-of-content"></script>
   </body>
 </html>

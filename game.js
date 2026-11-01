@@ -806,6 +806,7 @@
       saveSlotDialog.hidden = true;
       saveSlotDeletionMode = false;
       let continueAfterStorySave = false;
+      let returnToStoryAfterSave = false;
       if (saveListReturnToTitle) {
         saveListReturnToTitle = false;
         restoreSaveSlotDialogParent();
@@ -820,11 +821,17 @@
         gameOverOptions.querySelector('[data-game-over-action="load"]')?.focus();
       } else if (saveListReturnToStory) {
         saveListReturnToStory = false;
+        returnToStoryAfterSave = true;
         continueAfterStorySave = saveListContinueAfterClose;
         saveListContinueAfterClose = false;
         restoreSaveSlotDialogParent();
       } else {
         emptyCommand.hidden = false;
+      }
+      if (returnToStoryAfterSave) {
+        introEventImage.after(storyWindow);
+        storyWindow.hidden = false;
+        introEvent.hidden = false;
       }
       if (continueAfterStorySave) {
         const next = currentEventGoto;
@@ -1802,7 +1809,11 @@
       throw new Error('file:// からはイベントファイルを読み込めません。ローカルHTTPサーバー経由で開いてください。');
     }
     const response = await fetch(new URL(path, document.baseURI), { cache: 'no-store' });
-    if (!response.ok) throw new Error(`${path} の読み込みに失敗しました (${response.status})`);
+    if (!response.ok) {
+      const error = new Error(`${path} の読み込みに失敗しました (${response.status})`);
+      error.status = response.status;
+      throw error;
+    }
     return response.text();
   }
 
@@ -1810,7 +1821,11 @@
     const lines = source.replace(/\r/g, '').split('\n');
     const normalizedSectionName = sectionName.normalize('NFKC').trim();
     const sectionIndex = lines.findIndex((line) => line.replace(/\/\/.*$/, '').normalize('NFKC').trim() === normalizedSectionName);
-    if (sectionIndex < 0) throw new Error(`${sectionName} セクションがありません。`);
+    if (sectionIndex < 0) {
+      const error = new Error(`${sectionName} セクションがありません。`);
+      error.code = 'EVENT_SECTION_NOT_FOUND';
+      throw error;
+    }
 
     let opened = false;
     let depth = 0;
@@ -1891,9 +1906,39 @@
     });
   }
 
+  function showUnreleasedContentEnd() {
+    gameShell.hidden = true;
+    customScreen.hidden = true;
+    saveSlotDialog.hidden = true;
+    isClearStory = true;
+    currentEventGoto = '';
+    currentEventSaveList = false;
+    currentStoryText = 'ここから先は鋭意製作中です。\n今後の更新をお待ちください。\nプレイしていただき、ありがとうございました。';
+    introEventImage.after(storyWindow);
+    introEvent.classList.remove('fade-out', 'custom-macro-message', 'show-image');
+    introEventImage.src = introImageSource;
+    storyWindow.hidden = false;
+    storyWindow.classList.remove('system-message', 'with-portrait');
+    storySpeaker.textContent = '';
+    setStoryPortrait('', '');
+    storyText.textContent = currentStoryText;
+    storySkip.hidden = true;
+    storyStart.textContent = '《タイトルへ》';
+    storyStart.disabled = false;
+    introEvent.hidden = false;
+    requestAnimationFrame(() => introEvent.classList.add('show-image'));
+    storyStart.focus();
+  }
+
   async function playClearStory(stageId = currentStageId, sectionName = '\uff25\uff30') {
     introEvent.hidden = true;
     introEvent.classList.remove('show-image');
+    introEvent.classList.remove('custom-macro-message');
+    introEventImage.after(storyWindow);
+    storyWindow.hidden = false;
+    storyWindow.classList.remove('system-message', 'with-portrait');
+    storySpeaker.textContent = '';
+    setStoryPortrait('', '');
     isClearStory = true;
     currentStorySection = sectionName.normalize('NFKC').trim();
     currentEventGoto = '';
@@ -1915,8 +1960,17 @@
       if (epilogue.bgm) setBgm(epilogue.bgm);
       currentStoryText = epilogue.message;
     } catch (error) {
-      console.error('ＥＰイベントを読み込めませんでした。', error);
-      currentStoryText = 'ＥＰイベントを読み込めませんでした。\n' + (error.message || error);
+      const isUnreleasedNextEvent =
+        sectionName.normalize('NFKC').trim().toUpperCase() === 'OP' &&
+        (error.status === 404 || error.code === 'EVENT_SECTION_NOT_FOUND');
+      if (isUnreleasedNextEvent) {
+        console.info(`${eventPath} is not available yet; showing the end-of-content message.`);
+        showUnreleasedContentEnd();
+        return;
+      } else {
+        console.error('ＥＰイベントを読み込めませんでした。', error);
+        currentStoryText = 'ＥＰイベントを読み込めませんでした。\n' + (error.message || error);
+      }
     }
     introEvent.hidden = false;
     if (introEventImage.complete && introEventImage.naturalWidth > 0) {
@@ -2069,6 +2123,12 @@
     }
     const eventTarget = normalized.match(/^EVENT_(\d+)\s+(.+)$/i);
     if (eventTarget) {
+      const eventStageId = eventTarget[1].padStart(3, '0');
+      const eventSection = eventTarget[2].normalize('NFKC').trim().toUpperCase();
+      if (eventStageId === '006' && eventSection === 'OP') {
+        showUnreleasedContentEnd();
+        return;
+      }
       await playClearStory(eventTarget[1], eventTarget[2]);
       return;
     }
