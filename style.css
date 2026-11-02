@@ -315,14 +315,20 @@ body {
 }
 @media (max-width: 600px) {
   .battle-message-panel { --portrait-width: min(100px, 30vw); --portrait-gap: 10px; }
-  .battle-message-panel { height: clamp(150px, 28vw, 175px); }
+  .battle-message-panel { height: clamp(220px, 30vh, 250px); }
   .battle-condition-panel { padding: 7px 10px; }
   .battle-condition-columns { grid-template-columns: 1fr; gap: 6px; }
   .battle-message-panel .story-portrait { height: min(113px, 34vw); }
   .intro-event.custom-macro-message { --portrait-width: min(100px, 30vw); --portrait-gap: 10px; }
-  .battle-message-panel.inter-story-panel { height: clamp(150px, 28vw, 175px); }
-  .intro-event.custom-macro-message .story-window { height: clamp(150px, 28vw, 175px); }
+  .battle-message-panel.inter-story-panel { height: clamp(220px, 30vh, 250px); }
+  .intro-event.custom-macro-message .story-window { height: clamp(220px, 30vh, 250px); }
   .intro-event.custom-macro-message .story-portrait { height: min(113px, 34vw); }
+  .story-window.with-portrait .story-text {
+    flex-basis: 7.2em;
+    height: 7.2em;
+    min-height: 7.2em;
+    max-height: 7.2em;
+  }
 }
 .story-skip, .story-start {
   align-self: flex-end;
