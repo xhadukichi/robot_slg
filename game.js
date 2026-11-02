@@ -1907,8 +1907,15 @@
     });
   }
 
-  function showUnreleasedContentEnd() {
+  function discardBattleMapPresentation() {
     gameShell.hidden = true;
+    if (cameraFrame) cancelAnimationFrame(cameraFrame);
+    cameraFrame = 0;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function showUnreleasedContentEnd() {
+    discardBattleMapPresentation();
     customScreen.hidden = true;
     saveSlotDialog.hidden = true;
     isClearStory = true;
@@ -1932,6 +1939,7 @@
   }
 
   async function playClearStory(stageId = currentStageId, sectionName = '\uff25\uff30') {
+    discardBattleMapPresentation();
     introEvent.hidden = true;
     introEvent.classList.remove('show-image');
     introEvent.classList.remove('custom-macro-message');
@@ -2028,11 +2036,11 @@
   async function playInterStory(rawId) {
     const interId = String(rawId).padStart(3, '0');
     const interName = `Inter_${interId}`;
+    discardBattleMapPresentation();
     currentStageId = interId;
     isClearStory = true;
     currentEventGoto = '';
     currentEventSaveList = false;
-    gameShell.hidden = false;
     customScreen.hidden = true;
     introEvent.hidden = true;
     introEvent.classList.remove('fade-out', 'custom-macro-message', 'show-image');
@@ -2162,6 +2170,7 @@
   }
 
   async function startCustomMacro() {
+    discardBattleMapPresentation();
     try {
       const source = await loadEventScript('Data/Custom.txt');
       const lines = source.replace(/\r/g, '').split('\n').map((line) => line.normalize('NFKC').trim());
