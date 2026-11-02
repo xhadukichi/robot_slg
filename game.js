@@ -2036,6 +2036,8 @@
   async function playInterStory(rawId) {
     const interId = String(rawId).padStart(3, '0');
     const interName = `Inter_${interId}`;
+    const messagePanelParent = battleMessagePanel.parentElement;
+    const messagePanelNextSibling = battleMessagePanel.nextSibling;
     discardBattleMapPresentation();
     currentStageId = interId;
     isClearStory = true;
@@ -2063,6 +2065,7 @@
       if (inter.fadeIn) await fadeInStoryImage();
       else introEvent.classList.add('show-image');
       storyWindow.hidden = false;
+      document.body.append(battleMessagePanel);
       interStoryPresentationActive = true;
       battleMessagePanel.classList.add('inter-story-panel');
       try {
@@ -2073,6 +2076,8 @@
         closeBattleMessage();
         storyWindow.hidden = true;
         introEvent.hidden = true;
+        battleMessagePanel.hidden = true;
+        messagePanelParent.insertBefore(battleMessagePanel, messagePanelNextSibling);
       }
       if (inter.saveList) {
         currentEventGoto = inter.goto;
@@ -4204,6 +4209,7 @@
     mapZoomOut.disabled = false;
     VIEW_WIDTH = Math.min(MAX_VIEW_WIDTH, MAP_WIDTH);
     VIEW_HEIGHT = Math.min(MAX_VIEW_HEIGHT, MAP_HEIGHT);
+    mapFrame.style.setProperty('--map-frame-aspect', `${VIEW_WIDTH} / ${VIEW_HEIGHT}`);
     VIEW_PIXEL_WIDTH = TILE_SIZE * VIEW_WIDTH;
     VIEW_PIXEL_HEIGHT = TILE_SIZE * VIEW_HEIGHT;
     canvas.width = VIEW_PIXEL_WIDTH;
