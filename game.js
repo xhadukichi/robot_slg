@@ -1914,6 +1914,20 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
+  function clearFilePresentation() {
+    introEvent.hidden = true;
+    introEvent.classList.remove('fade-out', 'show-image', 'custom-macro-message');
+    storyWindow.hidden = true;
+    storyWindow.classList.remove('system-message', 'with-portrait');
+    storySpeaker.textContent = '';
+    setStoryPortrait('', '');
+    storyText.textContent = '';
+    storySkip.hidden = true;
+    storyStart.disabled = true;
+    battleMessagePanel.hidden = true;
+    battleMessagePanel.classList.remove('inter-story-panel', 'battle-event');
+  }
+
   function showUnreleasedContentEnd() {
     discardBattleMapPresentation();
     customScreen.hidden = true;
@@ -2064,7 +2078,6 @@
       introEvent.hidden = false;
       if (inter.fadeIn) await fadeInStoryImage();
       else introEvent.classList.add('show-image');
-      storyWindow.hidden = false;
       document.body.append(battleMessagePanel);
       interStoryPresentationActive = true;
       battleMessagePanel.classList.add('inter-story-panel');
@@ -2244,6 +2257,7 @@
       await startCustomMacro();
       return;
     }
+    clearFilePresentation();
     const interTarget = normalized.match(/^INTER_(\d+)$/i);
     if (interTarget) {
       await playInterStory(interTarget[1]);
@@ -3201,6 +3215,7 @@
   }
 
   async function loadBattleOpening(stageId = currentStageId, initialEventFlags = []) {
+    clearFilePresentation();
     currentStageId = String(stageId).padStart(3, '0');
     battleFundsEarned = 0;
     stageClearGrowthBonus = 0;
@@ -3331,6 +3346,7 @@
         unitId,
         portraitSource: resolveBustupSource(portraitReference) || resolveBustupSource(unitId),
       });
+      storyWindow.hidden = false;
       battleMessagePanel.classList.add('battle-event');
       battleMessagePanel.append(storyWindow);
       battleMessagePanel.hidden = false;

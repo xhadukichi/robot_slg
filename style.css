@@ -298,6 +298,7 @@ body {
   color: #fff;
   text-align: left;
 }
+.story-window[hidden] { display: none; }
 .intro-event:not(.custom-macro-message) .story-window {
   box-sizing: border-box;
   height: max(210px, calc(min(46vh, 390px) - 3.6em));
