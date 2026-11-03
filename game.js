@@ -162,6 +162,7 @@
   let battleMessageResolve = null;
   let battleAttackEvents = new Map();
   let battleDefenseEvents = new Map();
+  let battleUnitAttackAfterEvents = new Map();
   let battleObjectAttackBeforeEvents = new Map();
   let battleObjectAttackAfterEvents = new Map();
   let battleDefeatEvents = new Map();
@@ -2265,12 +2266,6 @@
     }
     const eventTarget = normalized.match(/^EVENT_(\d+)\s+(.+)$/i);
     if (eventTarget) {
-      const eventStageId = eventTarget[1].padStart(3, '0');
-      const eventSection = eventTarget[2].normalize('NFKC').trim().toUpperCase();
-      if (eventStageId === '006' && eventSection === 'OP') {
-        showUnreleasedContentEnd();
-        return;
-      }
       await playClearStory(eventTarget[1], eventTarget[2]);
       return;
     }
@@ -3267,6 +3262,11 @@
     } catch (error) {
       bgmStartDeferredUntilPhaseAnnouncement = false;
       console.error(`${battlePath} を読み込めませんでした。`, error);
+      introEventImage.after(storyWindow);
+      storyWindow.hidden = false;
+      storyWindow.classList.remove('system-message', 'with-portrait');
+      storySpeaker.textContent = '';
+      setStoryPortrait('', '');
       storyText.textContent = `${battlePath} を読み込めませんでした。\n${error.message || error}`;
       currentEventGoto = '';
       isClearStory = true;
@@ -3282,6 +3282,7 @@
     const battleEvents = parseBattleTriggerRecords(battleScript);
     battleAttackEvents = battleEvents.attacks;
     battleDefenseEvents = battleEvents.defenses;
+    battleUnitAttackAfterEvents = battleEvents.unitAttackAfter;
     battleObjectAttackBeforeEvents = battleEvents.objectAttackBefore;
     battleObjectAttackAfterEvents = battleEvents.objectAttackAfter;
     battleDefeatEvents = battleEvents.defeats;
@@ -3297,7 +3298,22 @@
   function resolveBustupSource(reference = '') {
     const normalized = String(reference ?? '').normalize('NFKC').trim();
     const unitMatch = normalized.match(/^PC(\d+)$/i);
-    if (unitMatch) return `Unit/BU_PC${unitMatch[1].padStart(2, '0')}.png`;
+    const npcMatch = normalized.match(/^NPC(\d+)$/i);
+    if (unitMatch || npcMatch) {
+      const npcDefinition = npcDefinitions.get(normalizeUnitId(normalized));
+      const matchingUnit = units.find((unit) => normalizeUnitId(unit.id) === normalizeUnitId(normalized))
+        ?? playerRoster.find((unit) => normalizeUnitId(unit.id) === normalizeUnitId(normalized));
+      const inferredTypeId = unitMatch ? `Type_PC_${unitMatch[1].padStart(3, '0')}` : '';
+      const typeId = npcDefinition?.unitTypeId ?? matchingUnit?.unitTypeId ?? inferredTypeId;
+      const configuredPortrait = npcDefinition
+        ? npcBaseParameters.get(typeId)?.portraitFile
+        : unitMatch
+          ? unitBaseParameters.get(typeId)?.portraitFile
+          : '';
+      if (configuredPortrait) return resolveBustupSource(configuredPortrait);
+      if (unitMatch) return `Unit/BU_PC${unitMatch[1].padStart(2, '0')}.png`;
+      return `Unit/BU_NPC${npcMatch[1].padStart(2, '0')}.png`;
+    }
     const graphicName = normalized.replace(/^Unit[\\/]/i, '');
     return /^[\p{L}\p{N}_.-]+\.png$/iu.test(graphicName) ? `Unit/${graphicName}` : '';
   }
@@ -3453,6 +3469,7 @@
   function parseBattleTriggerRecords(source) {
     const attacks = new Map();
     const defenses = new Map();
+    const unitAttackAfter = new Map();
     const objectAttackBefore = new Map();
     const objectAttackAfter = new Map();
     const defeats = new Map();
@@ -3501,30 +3518,37 @@
         continue;
       }
       if (attackName) {
-        const conditionIndex = lines.findIndex((line) => /^(?:PC\d+\s+VS\s+EN|EN\s+VS\s+PC\d+|EN\s+VS\s+OBJ\d+)$/i.test(normalizeBattleLine(line)));
+        const conditionIndex = lines.findIndex((line) => /^(?:PC\d+\s+VS\s+EN|EN\s+VS\s+(?:PC|NPC)\d+|EN\s+VS\s+OBJ\d+)$/i.test(normalizeBattleLine(line)));
         const condition = conditionIndex < 0 ? '' : normalizeBattleLine(lines[conditionIndex]);
+        const conditionBlock = conditionIndex < 0 ? null : extractBattleBraceBlock(lines, conditionIndex + 1);
         const outgoing = condition?.match(/^PC(\d+)\s+VS\s+EN$/);
-        const incoming = condition?.match(/^EN\s+VS\s+PC(\d+)$/);
+        const incoming = condition?.match(/^EN\s+VS\s+(PC|NPC)(\d+)$/);
         const objectTarget = condition?.match(/^EN\s+VS\s+(OBJ\d+)$/);
-        if (messages.length && outgoing) {
-          attacks.set(`PC${outgoing[1].padStart(2, '0')}`, { name, messages });
-        } else if (messages.length && incoming) {
-          defenses.set(`PC${incoming[1].padStart(2, '0')}`, { name, messages });
+        if (conditionBlock && outgoing) {
+          attacks.set(`PC${outgoing[1].padStart(2, '0')}`, { name, lines: conditionBlock.lines });
+        } else if (conditionBlock && incoming) {
+          defenses.set(normalizeUnitId(`${incoming[1]}${incoming[2]}`), { name, lines: conditionBlock.lines });
         } else if (objectTarget) {
-          const conditionBlock = extractBattleBraceBlock(lines, conditionIndex + 1);
           if (conditionBlock) objectAttackBefore.set(normalizeUnitId(objectTarget[1]), { name, lines: conditionBlock.lines });
         }
         continue;
       }
       if (attackAfterName) {
-        const conditionIndex = lines.findIndex((line) => /^EN\s+VS\s+OBJ\d+$/i.test(normalizeBattleLine(line)));
-        if (conditionIndex >= 0) {
-          const condition = normalizeBattleLine(lines[conditionIndex]);
-          const objectTarget = condition.match(/^EN\s+VS\s+(OBJ\d+)$/i);
-          const conditionBlock = extractBattleBraceBlock(lines, conditionIndex + 1);
-          if (objectTarget && conditionBlock) {
-            objectAttackAfter.set(normalizeUnitId(objectTarget[1]), { name, lines: conditionBlock.lines });
+        for (let index = 0; index < lines.length; index++) {
+          const condition = normalizeBattleLine(lines[index]);
+          const objectCondition = condition.match(/^EN\s+VS\s+(OBJ\d+)$/i);
+          const unitCondition = condition.match(/^((?:EN|PC|NPC)\d+|EN)\s+VS\s+((?:EN|PC|NPC)\d+)$/i);
+          if (!objectCondition && !unitCondition) continue;
+          const conditionBlock = extractBattleBraceBlock(lines, index + 1);
+          if (!conditionBlock) continue;
+          if (objectCondition) {
+            objectAttackAfter.set(normalizeUnitId(objectCondition[1]), { name, lines: conditionBlock.lines });
+          } else {
+            const attackerId = unitCondition[1].toUpperCase();
+            const targetId = normalizeUnitId(unitCondition[2]);
+            unitAttackAfter.set(`${attackerId}:${targetId}`, { name, lines: conditionBlock.lines });
           }
+          index = conditionBlock.endIndex;
         }
         continue;
       }
@@ -3563,7 +3587,7 @@
       }
     }
 
-    return { attacks, defenses, objectAttackBefore, objectAttackAfter, defeats, times, movements, groupMovements, objectDefeat, end };
+    return { attacks, defenses, unitAttackAfter, objectAttackBefore, objectAttackAfter, defeats, times, movements, groupMovements, objectDefeat, end };
   }
 
   function parseBattleLabels(source) {
@@ -3693,6 +3717,8 @@
     if (/^BGM\s+再生\s+\S+$/i.test(line)) return true;
     if (/^BGM\s+変更\s+\S+$/i.test(line)) return true;
     if (/^SE\s+再生\s+\S+$/i.test(line)) return true;
+    if (/^WAIT\s+\d+$/i.test(line)) return true;
+    if (/^[\p{L}\p{N}_. ()-]+\.mp3$/iu.test(line)) return true;
     if (/^(?:援軍配置\s|カーソル\s|メッセージ消去$|ゲームオーバー$|ステージクリア$|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|カウンタ\s|移動目標\s|攻撃目標\s|退却\s|GOTO(?:\s|:|：)|IF(?:\s|$))/.test(line)) return true;
     return /^(?:IF\s+PC\d+|IF\s+座標\s+PC\d+|IF\s+(?:フラグ|カウンタ)\s|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
       /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|軍資金\s*(?:\+\s*\d+|支払い)|成長ポイント\s*\+\s*\d+|カウンタ\s+.+|移動目標\s+NPC\d+\s*\(\d+\s*,\s*\d+\)|攻撃目標\s+(?:EN|NPC)\d+\s+(?:PC|EN|NPC|OBJ)\d+|退却\s+NPC\d+|フラグ\s+(?:ON|OFF)\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
@@ -3838,11 +3864,13 @@
       const bgmPlayCommand = line.match(/^BGM\s+再生\s+(\S+)$/i);
       const bgmChangeCommand = line.match(/^BGM\s+変更\s+(\S+)$/i);
       const sePlayCommand = line.match(/^SE\s+再生\s+(\S+)$/i);
+      const bareSeCommand = line.match(/^([\p{L}\p{N}_. ()-]+\.mp3)$/iu);
+      const frameWaitCommand = line.match(/^WAIT\s+(\d+)$/i);
       const flagCommand = line.match(/^フラグ\s+(ON|OFF)\s+(.+)$/i);
       const battleFundsCommand = line.match(/^軍資金\s*\+\s*(\d+)$/);
       const payBattleFundsCommand = line === '軍資金 支払い';
       const growthPointsCommand = line.match(/^成長ポイント\s*\+\s*(\d+)$/);
-      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || localGotoCommand || retreatCommand || counterCommand || defeatConditionCommand || movementGoalCommand || attackTargetCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || flagCommand || battleFundsCommand || payBattleFundsCommand || growthPointsCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
+      const recognizedCommand = reinforcement || cursorCommand || clearCommand || gameOverCommand || gotoCommand || localGotoCommand || retreatCommand || counterCommand || defeatConditionCommand || movementGoalCommand || attackTargetCommand || bgmStopCommand || bgmStartCommand || bgmPlayCommand || bgmChangeCommand || sePlayCommand || bareSeCommand || frameWaitCommand || flagCommand || battleFundsCommand || payBattleFundsCommand || growthPointsCommand || line === 'メッセージ消去' || /^クリアボーナス\s+\d+$/.test(line);
       if (!recognizedCommand) {
         pendingMessageLines.push(rawLine);
         continue;
@@ -3876,6 +3904,10 @@
         selectBgmForNextStart(bgmChangeCommand[1]);
       } else if (sePlayCommand) {
         await playSe(sePlayCommand[1]);
+      } else if (bareSeCommand) {
+        await playSe(bareSeCommand[1]);
+      } else if (frameWaitCommand) {
+        await wait(Number(frameWaitCommand[1]) * (1000 / 60));
       } else if (gotoCommand) {
         clearTransitioning = true;
         isGameOver = true;
@@ -3989,6 +4021,7 @@
 
   function createBattleNpc(id, x, y, definition) {
     const parameters = npcBaseParameters.get(definition.unitTypeId) ?? {};
+    const weapon = weaponParameters.get(definition.weaponTypeId);
     const size = parameters.size ?? 1;
     const widthInTiles = size === 2 || size === 4 ? 2 : 1;
     const heightInTiles = size === 4 ? 2 : 1;
@@ -4001,9 +4034,11 @@
       maxHp: parameters.hp ?? 1,
       moveRange: parameters.moveRange ?? 0,
       moveRemaining: 0,
-      minAttackRange: 1,
-      attackRange: 0,
-      attackPower: 0,
+      weaponTypeId: definition.weaponTypeId ?? '',
+      weaponAccuracy: weapon?.accuracy,
+      minAttackRange: weapon?.minAttackRange ?? 1,
+      attackRange: weapon?.attackRange ?? 0,
+      attackPower: weapon?.attackPower ?? 0,
       evasion: parameters.evasion ?? 0,
       hitBonus: parameters.hitBonus ?? 0,
       passableTerrainTypes: [...(parameters.passableTerrainTypes ?? [])],
@@ -4048,7 +4083,19 @@
       : battleDefenseEvents.get(target.id);
     if (!event || completedBattleEvents.has(event.name)) return;
     completedBattleEvents.add(event.name);
-    await playBattleMessages(event.messages);
+    const messages = parseBattleMessageRecords(selectBattleIfBranches(event.lines));
+    await playBattleMessages(messages);
+  }
+
+  async function runBattleUnitAttackAfterEvent(attacker, target) {
+    const targetId = normalizeUnitId(target.id);
+    const attackerId = normalizeUnitId(attacker.id);
+    const sideWildcard = attacker.side === 'enemy' ? 'EN' : attacker.side === 'player' ? 'PC' : 'NPC';
+    const event = battleUnitAttackAfterEvents.get(`${attackerId}:${targetId}`)
+      ?? battleUnitAttackAfterEvents.get(`${sideWildcard}:${targetId}`);
+    if (!event || completedBattleEvents.has(event.name)) return;
+    completedBattleEvents.add(event.name);
+    await playBattleScriptCommands(event.lines);
   }
 
   async function runBattleObjectAttackEvent(attacker, obstacle, phase) {
@@ -4368,9 +4415,10 @@
       if (!match) continue;
       const [, rawId, x, y] = match;
       const id = normalizeUnitId(rawId);
-      if (id.startsWith('NPC')) {
-        const definition = npcDefinitions.get(id);
-        if (!definition?.imageFile) throw new Error(`NPC_Paramに${id}の画像指定がありません。`);
+      const npcDefinition = npcDefinitions.get(id);
+      if (npcDefinition) {
+        const definition = npcDefinition;
+        if (!definition.imageFile) throw new Error(`NPC_Paramに${id}の画像指定がありません。`);
         units.push(createBattleNpc(id, Number(x) - 1, Number(y) - 1, definition));
         configuredUnitIds.add(id);
         continue;
@@ -4443,6 +4491,7 @@
       const trimmed = normalizeBattleLine(line.replace(/\/\/.*$/, ''));
       if (trimmed === 'Type_A') { readingTerrain = true; terrainBlocksLineOfSight = false; terrainType = trimmed; continue; }
       if (trimmed === 'Type_B') { readingTerrain = true; terrainBlocksLineOfSight = true; terrainType = trimmed; continue; }
+      if (trimmed === 'Type_C') { readingTerrain = true; terrainBlocksLineOfSight = true; terrainType = trimmed; continue; }
       if (trimmed === '岩' || trimmed === '壁') { readingTerrain = true; terrainBlocksLineOfSight = true; terrainType = trimmed; }
       else if (trimmed === '湖' || trimmed === '木' || trimmed === '壊れ壁') {
         readingTerrain = true;
@@ -4494,6 +4543,7 @@
       ['HP', 'hp'], ['\u79fb\u52d5\u529b', 'moveRange'], ['\u56de\u907f', 'evasion'],
       ['\u547d\u4e2d\u88dc\u6b63', 'hitBonus'], ['\u529b', 'strength'], ['\u30b5\u30a4\u30ba', 'size'],
       ['\u98db\u884c', 'canFly'], ['\u79fb\u52d5\u53ef\u80fd', 'passableTerrainTypes'],
+      ['\u30d0\u30b9\u30c8\u30a2\u30c3\u30d7', 'portraitFile'],
     ]);
     const weaponFields = new Map([
       ['\u5c04\u7a0b', 'attackRange'], ['\u30c0\u30e1\u30fc\u30b8', 'attackPower'], ['\u547d\u4e2d\u7387', 'accuracy'], ['重量', 'weight'],
@@ -4598,6 +4648,10 @@
         currentType.name = nameMatch[1];
         continue;
       }
+      if (currentFields === unitFields && /^[\p{L}\p{N}_.-]+\.png$/iu.test(line)) {
+        currentType.portraitFile = line;
+        continue;
+      }
       const fieldMatch = line.match(/^([^:\s]+)\s*(?::\s*|\s+)(.+)$/);
       if (!fieldMatch) continue;
       const fieldName = fieldMatch[1].toUpperCase() === 'SE' || fieldMatch[1].toUpperCase() === 'HIT'
@@ -4606,7 +4660,7 @@
       const value = fieldMatch[2].trim();
       const outputField = currentFields?.get(fieldName);
       if (!outputField) continue;
-      if (outputField === 'se' || outputField === 'hitEffect' || outputField === 'effect') currentType[outputField] = value;
+      if (outputField === 'se' || outputField === 'hitEffect' || outputField === 'effect' || outputField === 'portraitFile') currentType[outputField] = value;
       else if (outputField === 'price') {
         const normalizedPrice = value.normalize('NFKC').trim();
         if (/^[ー―—-]$/.test(normalizedPrice)) currentType.price = null;
@@ -4750,6 +4804,8 @@
       if (imageMatch) definitions.get(currentId).imageFile = imageMatch[1];
       const unitTypeMatch = line.match(/^(Type_NPC_[\w-]+)$/i);
       if (unitTypeMatch) definitions.get(currentId).unitTypeId = unitTypeMatch[1];
+      const weaponMatch = line.match(/^(Type_WEP_\d+)$/i);
+      if (weaponMatch) definitions.get(currentId).weaponTypeId = weaponMatch[1];
     }
     return definitions;
   }
@@ -4760,7 +4816,7 @@
     for (const rawLine of source.replace(/\r/g, '').split('\n')) {
       const line = rawLine.replace(/\/\/.*$/, '').normalize('NFKC').trim();
       if (!line.startsWith(commandName)) continue;
-      const match = line.match(/^\u79fb\u52d5\u76ee\u6a19\s+(NPC\d+)\s*\(\s*(\d+)\s*\x2c\s*(\d+)\s*\)$/i);
+      const match = line.match(/^\u79fb\u52d5\u76ee\u6a19\s+((?:NPC|PC)\d+)\s*\(\s*(\d+)\s*\x2c\s*(\d+)\s*\)$/i);
       if (!match) throw new Error(`\u79fb\u52d5\u76ee\u6a19\u306e\u66f8\u5f0f\u3092\u89e3\u6790\u3067\u304d\u307e\u305b\u3093: ${line}`);
       const id = normalizeUnitId(match[1]);
       if (goals.has(id)) throw new Error(`\u79fb\u52d5\u76ee\u6a19\u304c\u91cd\u8907\u3057\u3066\u3044\u307e\u3059: ${id}`);
@@ -5524,6 +5580,28 @@
       if (isGameOver || clearTransitioning || currentSide !== 'enemy') break;
     }
     enemyRangePreview = null;
+
+    for (const npc of units.filter((unit) => unit.side === 'npc' && unit.weaponTypeId && unit.attackRange > 0)) {
+      if (isGameOver || clearTransitioning || currentSide !== 'enemy') break;
+      const target = units
+        .filter((unit) => unit.side === 'enemy' && canAttackUnitTarget(npc, unit))
+        .sort((a, b) => unitDistance(npc, a) - unitDistance(npc, b))[0];
+      if (!target) continue;
+
+      setBgm(phaseBgmFiles.npc);
+      selectedUnit = npc;
+      cursor.x = target.x;
+      cursor.y = target.y;
+      scrollEntityToCenter(target);
+      await waitForCameraToStop();
+      rangeMode = 'attack';
+      enemyRangePreview = { unit: npc, mode: 'attack', target };
+      draw();
+      await wait(300);
+      await tryAttackTarget(target);
+      await wait(300);
+    }
+    enemyRangePreview = null;
   }
 
   function getNpcGoalPath(unit, goal) {
@@ -5611,9 +5689,10 @@
   }
 
   function canUnitTraverseTerrain(unit, tile) {
+    const tileTypes = terrainTypesByTile.get(tile);
+    if (tileTypes?.has('Type_C')) return false;
     if (unit.canFly && !lineOfSightBlockedTiles.has(tile)) return true;
     const allowedTypes = unit.passableTerrainTypes ?? [];
-    const tileTypes = terrainTypesByTile.get(tile);
     return Boolean(tileTypes && [...tileTypes].some((terrainType) => allowedTypes.includes(terrainType)));
   }
 
@@ -5962,6 +6041,7 @@
         showAttackMessage(`${attacker.id} → ${target.id}：回避！`);
       }
 
+      if (!isGameOver && !clearTransitioning) await runBattleUnitAttackAfterEvent(attacker, target);
       checkUnitCompletion(attacker);
       scrollToCursor();
       return true;
@@ -6606,7 +6686,7 @@
     if (x < 0 || y < 0 || x + width > MAP_WIDTH || y + height > MAP_HEIGHT) return true;
     for (let tileY = y; tileY < y + height; tileY++) {
       for (let tileX = x; tileX < x + width; tileX++) {
-        // Flyers cross Type_A terrain, but Type_B terrain still blocks them.
+        // Flyers cross Type_A terrain, but Type_B and Type_C terrain block them.
         const tile = `${tileX},${tileY}`;
         if (impassableTiles.has(tile) && !canUnitTraverseTerrain(unit, tile)) return true;
       }
