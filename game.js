@@ -178,6 +178,7 @@
   const battleCounters = new Map();
   let npcDefinitions = new Map();
   let enemyReinforcementDefinitions = new Map();
+  let playerReinforcementDefinitions = new Map();
   const eventFlags = new Set();
   const completedBattleEvents = new Set();
 
@@ -607,7 +608,7 @@
       cursor.x = Math.max(0, Math.min(MAP_WIDTH - 1, mapX));
       cursor.y = Math.max(0, Math.min(MAP_HEIGHT - 1, mapY));
       if (clickedUnit && clickedUnit !== selectedUnit && canAttackUnitTarget(selectedUnit, clickedUnit)) {
-        tryAttackTarget(clickedUnit);
+        tryAttackTarget(clickedUnit, { x: cursor.x, y: cursor.y });
         scrollToCursor();
         return;
       }
@@ -625,7 +626,7 @@
         if (pendingMove?.unit === selectedUnit) rollbackPendingMove();
         else rangeMode = null;
       } else if (clickedUnit && clickedUnit !== selectedUnit) {
-        tryAttackTarget(clickedUnit);
+        tryAttackTarget(clickedUnit, { x: cursor.x, y: cursor.y });
       }
       scrollToCursor();
       return;
@@ -836,11 +837,7 @@
         introEvent.hidden = false;
       }
       if (continueAfterStorySave) {
-        const next = currentEventGoto;
-        currentEventGoto = '';
-        if (next) void followEventGoto(next);
-        else if (isClearStory) void returnToTitle();
-        else void loadBattleOpening(currentStageId);
+        continueAfterStorySaveFlow();
         return;
       }
       canvas.focus();
@@ -864,15 +861,11 @@
         saveSlotStatus.textContent = `データ ${String(slotIndex + 1).padStart(2, '0')} にセーブしました。`;
         renderSaveSlots();
         if (saveListReturnToStory && saveListContinueAfterClose) {
-          const next = currentEventGoto;
-          currentEventGoto = '';
           saveSlotDialog.hidden = true;
           saveListReturnToStory = false;
           saveListContinueAfterClose = false;
           restoreSaveSlotDialogParent();
-          if (next) void followEventGoto(next);
-          else if (isClearStory) void returnToTitle();
-          else void loadBattleOpening(currentStageId);
+          continueAfterStorySaveFlow();
         }
       } else {
         saveSlotStatus.textContent = 'セーブ情報を保存できませんでした。';
@@ -881,6 +874,14 @@
       loadSaveGame(Number(slotButton.dataset.slotIndex));
     }
   });
+
+  function continueAfterStorySaveFlow() {
+    const next = currentEventGoto;
+    currentEventGoto = '';
+    if (next) void followEventGoto(next);
+    else if (isClearStory) showUnreleasedContentEnd();
+    else void loadBattleOpening(currentStageId);
+  }
 
   function openUnitMenu(unit) {
     selectedUnit = unit;
@@ -1271,6 +1272,16 @@
 
   function playPhaseBgm() {
     setBgm(currentSide === 'player' ? phaseBgmFiles.player : phaseBgmFiles.enemy);
+  }
+
+  async function playAutomatedPhaseBgm(filename) {
+    await fadeOutBgm();
+    currentBgm = filename;
+    loadedBgm = '';
+    const wasPhaseInputLocked = phaseInputLocked;
+    phaseInputLocked = false;
+    startCurrentBgm();
+    phaseInputLocked = wasPhaseInputLocked;
   }
 
   async function stopBgmPlayback() {
@@ -1785,6 +1796,7 @@
       if (opening.bgm) setBgm(opening.bgm);
       currentStoryText = opening.message;
     } catch (error) {
+      if (showUnavailableDestination(error, `Event/Event_${currentStageId}.txt OP`)) return;
       console.error('OPイベントを読み込めませんでした。', error);
       currentStoryText = `OPイベントを読み込めませんでした。\n${error.message || error}\nEvent/Event_${currentStageId}.txt と素材を確認してください。`;
       introEventImage.src = introImageSource;
@@ -1810,13 +1822,27 @@
     if (window.location.protocol === 'file:') {
       throw new Error('file:// からはイベントファイルを読み込めません。ローカルHTTPサーバー経由で開いてください。');
     }
-    const response = await fetch(new URL(path, document.baseURI), { cache: 'no-store' });
-    if (!response.ok) {
-      const error = new Error(`${path} の読み込みに失敗しました (${response.status})`);
-      error.status = response.status;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch(new URL(path, document.baseURI), { cache: 'no-store', signal: controller.signal });
+      if (!response.ok) {
+        const error = new Error(`${path} の読み込みに失敗しました (${response.status})`);
+        error.status = response.status;
+        throw error;
+      }
+      return await response.text();
+    } catch (error) {
+      if (controller.signal.aborted) {
+        const timeoutError = new Error(`${path} の読み込みがタイムアウトしました。`);
+        timeoutError.code = 'EVENT_SCRIPT_TIMEOUT';
+        throw timeoutError;
+      }
+      if (!error.code && !error.status) error.code = 'EVENT_SCRIPT_UNAVAILABLE';
       throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
     }
-    return response.text();
   }
 
   function parseEventSection(source, sectionName) {
@@ -1882,10 +1908,32 @@
   }
 
   function waitForImage(image) {
-    if (image.complete && image.naturalWidth > 0) return Promise.resolve();
+    if (image.complete) {
+      return image.naturalWidth > 0
+        ? Promise.resolve()
+        : Promise.reject(Object.assign(new Error(`${image.src} を読み込めません。`), { code: 'IMAGE_LOAD_FAILED' }));
+    }
     return new Promise((resolve, reject) => {
-      image.addEventListener('load', resolve, { once: true });
-      image.addEventListener('error', () => reject(new Error(`${image.src} を読み込めません。`)), { once: true });
+      const finish = (error = null) => {
+        window.clearTimeout(timeoutId);
+        image.removeEventListener('load', onLoad);
+        image.removeEventListener('error', onError);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onLoad = () => finish();
+      const onError = () => finish(Object.assign(new Error(`${image.src} を読み込めません。`), { code: 'IMAGE_LOAD_FAILED' }));
+      const timeoutId = window.setTimeout(() => {
+        const error = new Error(`${image.src} の読み込みがタイムアウトしました。`);
+        error.code = 'IMAGE_LOAD_TIMEOUT';
+        finish(error);
+      }, 5000);
+      image.addEventListener('load', onLoad);
+      image.addEventListener('error', onError);
+      if (image.complete) {
+        if (image.naturalWidth > 0) onLoad();
+        else onError();
+      }
     });
   }
 
@@ -1918,6 +1966,8 @@
   function clearFilePresentation() {
     introEvent.hidden = true;
     introEvent.classList.remove('fade-out', 'show-image', 'custom-macro-message');
+    customScreen.hidden = true;
+    customDebugPanel.hidden = true;
     storyWindow.hidden = true;
     storyWindow.classList.remove('system-message', 'with-portrait');
     storySpeaker.textContent = '';
@@ -1953,9 +2003,20 @@
     storyStart.focus();
   }
 
+  function showUnavailableDestination(error, destination = '') {
+    const unavailable = (Number(error?.status) >= 400) || [
+      'EVENT_SCRIPT_TIMEOUT', 'EVENT_SCRIPT_UNAVAILABLE', 'EVENT_SECTION_NOT_FOUND', 'INTER_SECTION_NOT_FOUND',
+      'IMAGE_LOAD_TIMEOUT', 'IMAGE_LOAD_FAILED',
+    ].includes(error?.code);
+    if (!unavailable) return false;
+    console.info(`${destination || 'Scenario destination'} is unavailable; showing the end-of-content message.`);
+    showUnreleasedContentEnd();
+    return true;
+  }
+
   async function playClearStory(stageId = currentStageId, sectionName = '\uff25\uff30') {
     discardBattleMapPresentation();
-    introEvent.hidden = true;
+    introEvent.hidden = false;
     introEvent.classList.remove('show-image');
     introEvent.classList.remove('custom-macro-message');
     introEventImage.after(storyWindow);
@@ -1971,27 +2032,26 @@
     storyStart.textContent = '\u300aContinue\u300b';
     storyText.textContent = '';
     storyStart.disabled = true;
+    storySkip.hidden = true;
     skipStoryReveal = false;
+    introEventImage.src = introImageSource;
+    const eventPath = `Event/Event_${currentStageId}.txt`;
+    storyText.textContent = '';
+    introEvent.classList.add('show-image');
     try {
-      const eventPath = `Event/Event_${currentStageId}.txt`;
       const epilogue = parseEventSection(await loadEventScript(eventPath), sectionName);
       currentEventGoto = epilogue.goto || '';
       currentEventSaveList = epilogue.saveList;
       if (!epilogue.message) throw new Error(`${eventPath} に${sectionName}のＭＥＳがありません。`);
       const defaultBackground = sectionName.normalize('NFKC').toUpperCase() === 'OP' ? 'Event_01.png' : 'Event_01_ED.png';
+      introEvent.classList.remove('show-image');
       introEventImage.src = 'Unit/' + (epilogue.background || defaultBackground);
       await waitForImage(introEventImage);
       if (epilogue.bgm) setBgm(epilogue.bgm);
       currentStoryText = epilogue.message;
     } catch (error) {
-      const isUnreleasedNextEvent =
-        sectionName.normalize('NFKC').trim().toUpperCase() === 'OP' &&
-        (error.status === 404 || error.code === 'EVENT_SECTION_NOT_FOUND');
-      if (isUnreleasedNextEvent) {
-        console.info(`${eventPath} is not available yet; showing the end-of-content message.`);
-        showUnreleasedContentEnd();
-        return;
-      } else {
+      if (showUnavailableDestination(error, `${eventPath} ${sectionName}`)) return;
+      else {
         console.error('ＥＰイベントを読み込めませんでした。', error);
         currentStoryText = 'ＥＰイベントを読み込めませんでした。\n' + (error.message || error);
       }
@@ -2006,7 +2066,7 @@
 
   function parseInterScript(source, interName) {
     const lines = tryExtractEventBlock(source, interName);
-    if (!lines.length) throw new Error(`${interName} ブロックがありません。`);
+    if (!lines.length) throw Object.assign(new Error(`${interName} ブロックがありません。`), { code: 'INTER_SECTION_NOT_FOUND' });
     const result = { background: '', bgm: '', fadeIn: false, messages: [], saveList: false, goto: '' };
 
     for (let index = 0; index < lines.length; index++) {
@@ -2095,19 +2155,18 @@
       }
       if (inter.saveList) {
         currentEventGoto = inter.goto;
-        currentEventSaveList = true;
-        storyText.textContent = '';
-        storySpeaker.textContent = '';
-        setStoryPortrait('', '');
-        storyStart.textContent = '\u300aContinue\u300b';
-        storyStart.disabled = false;
-        storyWindow.hidden = false;
-        introEvent.hidden = false;
+        saveListReturnToStory = true;
+        saveListContinueAfterClose = Boolean(currentEventGoto);
+        saveSlotDialog.classList.add('floating-save-dialog');
+        document.body.append(saveSlotDialog);
+        openSaveSlotList('save');
+        saveSlotDialog.querySelector('[data-action="close-save-slots"]')?.focus();
       } else if (inter.goto) {
         await followEventGoto(inter.goto);
       }
       else await returnToTitle();
     } catch (error) {
+      if (showUnavailableDestination(error, `Event/${interName}.txt`)) return;
       console.error(`${interName} を読み込めませんでした。`, error);
       interStoryPresentationActive = false;
       battleMessagePanel.classList.remove('inter-story-panel');
@@ -2243,6 +2302,7 @@
         await showCustomScreen();
       }
     } catch (error) {
+      if (showUnavailableDestination(error, 'Data/Custom.txt')) return;
       console.error('Data/Custom.txt のイベントを実行できませんでした。', error);
       customMacroActive = false;
       customMacroMessages = [];
@@ -2278,12 +2338,19 @@
     }
     currentEventGoto = '';
     isClearStory = true;
+    introEventImage.after(storyWindow);
+    introEvent.classList.remove('fade-out', 'custom-macro-message');
+    introEventImage.src = introImageSource;
+    storyWindow.hidden = false;
+    storyWindow.classList.remove('system-message', 'with-portrait');
+    storySpeaker.textContent = '';
+    setStoryPortrait('', '');
     storyText.textContent = `未対応のGOTO先です: ${target}`;
     storyStart.textContent = '\u300aClick to Top\u300b';
     storyStart.disabled = false;
     storySkip.hidden = true;
-    introEvent.classList.remove('fade-out');
     introEvent.hidden = false;
+    requestAnimationFrame(() => introEvent.classList.add('show-image'));
   }
 
   const customPreviewCharacters = [
@@ -3260,6 +3327,7 @@
       await playBattleScriptCommands(turnZeroEvent.lines);
       announceCurrentTurn(true);
     } catch (error) {
+      if (showUnavailableDestination(error, battlePath)) return;
       bgmStartDeferredUntilPhaseAnnouncement = false;
       console.error(`${battlePath} を読み込めませんでした。`, error);
       introEventImage.after(storyWindow);
@@ -3721,7 +3789,7 @@
     if (/^[\p{L}\p{N}_. ()-]+\.mp3$/iu.test(line)) return true;
     if (/^(?:援軍配置\s|カーソル\s|メッセージ消去$|ゲームオーバー$|ステージクリア$|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|カウンタ\s|移動目標\s|攻撃目標\s|退却\s|GOTO(?:\s|:|：)|IF(?:\s|$))/.test(line)) return true;
     return /^(?:IF\s+PC\d+|IF\s+座標\s+PC\d+|IF\s+(?:フラグ|カウンタ)\s|ELSE|ゲームオーバー|ステージクリア|クリアボーナス(?:\s|$)|軍資金(?:\s|\+|$)|成長ポイント(?:\s|\+|$)|フラグ\s|GOTO(?:\s|:|：)|ＧＯＴＯ(?:\s|:|：))$/i.test(line) ||
-      /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|軍資金\s*(?:\+\s*\d+|支払い)|成長ポイント\s*\+\s*\d+|カウンタ\s+.+|移動目標\s+NPC\d+\s*\(\d+\s*,\s*\d+\)|攻撃目標\s+(?:EN|NPC)\d+\s+(?:PC|EN|NPC|OBJ)\d+|退却\s+NPC\d+|フラグ\s+(?:ON|OFF)\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
+      /^(?:ゲームオーバー|ステージクリア|クリアボーナス\s+\d+|軍資金\s*(?:\+\s*\d+|支払い)|成長ポイント\s*\+\s*\d+|カウンタ\s+.+|移動目標\s+NPC\d+\s*\(\d+\s*,\s*\d+\)|攻撃目標\s+(?:EN|NPC)\d+\s+(?:PC|EN|NPC|OBJ)\d+|退却\s+(?:PC|NPC|EN)\d+|フラグ\s+(?:ON|OFF)\s+.+|GOTO(?:\s|:|：).+|ＧＯＴＯ(?:\s|:|：).+)$/i.test(line);
   }
 
   function extractBattleBraceBlock(lines, startIndex) {
@@ -3852,7 +3920,7 @@
       const cursorCommand = line.match(/^カーソル\s*\((\d+)\s*,\s*(\d+)\)$/);
       const gotoCommand = line.match(/^GOTO\s*[:：]\s*(.+)$/i);
       const localGotoCommand = line.match(/^(?:GOTO|ＧＯＴＯ)\s+(.+)$/i);
-      const retreatCommand = line.match(/^退却\s+(NPC\d+)$/i);
+      const retreatCommand = line.match(/^退却\s+((?:PC|NPC|EN)\d+)$/i);
       const counterCommand = line.match(/^カウンタ\s+(.+?)\s*([+-])\s*(\d+)$/);
       const defeatConditionCommand = line.match(/^敗北条件(追加|削除)(?:\s+(.+))?$/);
       const movementGoalCommand = line.match(/^移動目標\s+(NPC\d+)\s*\((\d+)\s*,\s*(\d+)\)$/i);
@@ -3925,6 +3993,9 @@
         const id = normalizeUnitId(retreatCommand[1]);
         const index = units.findIndex((unit) => unit.id === id);
         if (index >= 0) units.splice(index, 1);
+        if (selectedUnit?.id === id) selectedUnit = null;
+        if (pendingMove?.unit?.id === id) pendingMove = null;
+        if (combatTarget?.id === id) combatTarget = null;
         draw();
       } else if (counterCommand) {
         const key = counterCommand[1].trim();
@@ -3969,7 +4040,10 @@
         if (targetId.startsWith('OBJ') && !target.destructible) throw new Error(`${targetId} は破壊可能オブジェクトではありません。`);
         unit.attackTargetId = targetId;
       } else if (reinforcement) {
-        if (reinforcement[1].toUpperCase().startsWith('EN')) {
+        const reinforcementId = reinforcement[1].toUpperCase();
+        if (reinforcementId.startsWith('PC')) {
+          await deployBattlePlayer(reinforcementId, Number(reinforcement[2]), Number(reinforcement[3]));
+        } else if (reinforcementId.startsWith('EN')) {
           await deployBattleEnemy(reinforcement[1], Number(reinforcement[2]), Number(reinforcement[3]));
         } else {
           await deployBattleNpc(reinforcement[1], Number(reinforcement[2]), Number(reinforcement[3]));
@@ -4013,6 +4087,28 @@
     const existing = units.find((unit) => unit.id === id);
     if (existing) units.splice(units.indexOf(existing), 1);
     const unit = createBattleNpc(id, mapX - 1, mapY - 1, definition);
+    unit.image.src = `Unit/${unit.imageFile}`;
+    await waitForImage(unit.image);
+    units.push(unit);
+    draw();
+  }
+
+  async function deployBattlePlayer(rawId, mapX, mapY) {
+    const id = normalizeUnitId(rawId);
+    const definition = playerReinforcementDefinitions.get(id);
+    if (!definition) throw new Error(`ADD_Paramに${id}の配置データがありません。`);
+    const existing = units.find((unit) => unit.id === id);
+    if (existing) units.splice(units.indexOf(existing), 1);
+    const unit = {
+      ...definition,
+      x: Math.max(0, Math.min(MAP_WIDTH - Math.ceil((definition.spriteWidth ?? TILE_SIZE) / TILE_SIZE), mapX - 1)),
+      y: Math.max(0, Math.min(MAP_HEIGHT - Math.ceil((definition.spriteHeight ?? TILE_SIZE) / TILE_SIZE), mapY - 1)),
+      image: new Image(),
+      moveUsed: false,
+      moveRemaining: definition.moveRange,
+      attackUsed: false,
+      ended: false,
+    };
     unit.image.src = `Unit/${unit.imageFile}`;
     await waitForImage(unit.image);
     units.push(unit);
@@ -4124,6 +4220,7 @@
       const reached = units.some((unit) => unit.side === 'npc' && unit.x + 1 >= minX && unit.x + 1 <= maxX && unit.y + 1 >= minY && unit.y + 1 <= maxY);
       if (!reached) continue;
       completedBattleEvents.add(event.name);
+      eventFlags.add(normalizeBattleLine(event.name));
       const endedEvent = await playBattleScriptCommands(event.lines);
       if (endedEvent || isGameOver || clearTransitioning) return;
     }
@@ -4136,6 +4233,7 @@
       if (mapX < Math.min(x1, x2) || mapX > Math.max(x1, x2) ||
           mapY < Math.min(y1, y2) || mapY > Math.max(y1, y2)) continue;
       completedBattleEvents.add(event.name);
+      eventFlags.add(normalizeBattleLine(event.name));
       const endedEvent = await playBattleScriptCommands(event.lines);
       if (endedEvent || isGameOver || clearTransitioning) return;
     }
@@ -4222,7 +4320,6 @@
     unitBaseParameters = parameterTable.units;
     npcBaseParameters = parameterTable.npcs;
     weaponParameters = parameterTable.weapons;
-    const weaponOwners = parameterTable.weaponOwners;
     armorParameters = parameterTable.armors;
     itemParameters = parameterTable.items;
     const carriedPlayerLoadouts = new Map(playerRoster.map((unit) => [normalizeUnitId(unit.id), {
@@ -4245,7 +4342,7 @@
       } : { ...loadout });
     }
     const stageEnemyLoadouts = parseUnitLoadouts(source, 'EN_Param');
-    validateUnitLoadouts(carriedPlayerLoadouts, 'ADD_Param', weaponOwners);
+    validateUnitLoadouts(carriedPlayerLoadouts, 'ADD_Param');
     validateUnitLoadouts(stageEnemyLoadouts, 'EN_Param');
     const unitLoadouts = new Map([
       ...carriedPlayerLoadouts,
@@ -4317,6 +4414,7 @@
     }
     const configuredObstacles = [];
     enemyReinforcementDefinitions = new Map();
+    playerReinforcementDefinitions = new Map();
     const configuredUnitIds = new Set();
     const configureUnit = (unit, id, position, fallbackImageFile = '') => {
       const loadout = unitLoadouts.get(id);
@@ -4428,6 +4526,15 @@
       if (!unit || (!loadout?.imageFile && !stagePreviewMode)) continue;
       configuredUnitIds.add(id);
       configureUnit(unit, id, { x: Number(x) - 1, y: Number(y) - 1 }, loadout?.imageFile ?? `${id}s.png`);
+    }
+
+    for (const id of carriedPlayerLoadouts.keys()) {
+      if (configuredUnitIds.has(id)) continue;
+      const unit = units.find((candidate) => candidate.id === id);
+      const loadout = unitLoadouts.get(id);
+      if (!unit || !loadout?.imageFile) continue;
+      configureUnit(unit, id, { x: 0, y: 0 }, loadout.imageFile);
+      playerReinforcementDefinitions.set(id, { ...unit, image: null });
     }
 
     for (const id of stageEnemyLoadouts.keys()) {
@@ -4547,7 +4654,7 @@
     ]);
     const weaponFields = new Map([
       ['\u5c04\u7a0b', 'attackRange'], ['\u30c0\u30e1\u30fc\u30b8', 'attackPower'], ['\u547d\u4e2d\u7387', 'accuracy'], ['重量', 'weight'],
-      ['SE', 'se'], ['HIT', 'hitEffect'], ['価格', 'price'],
+      ['SE', 'se'], ['HIT', 'hitEffect'], ['価格', 'price'], ['特殊', 'special'],
     ]);
     const armorFields = new Map([['\u88c5\u7532\u88dc\u6b63', 'armorCorrection'], ['重量', 'weight'], ['価格', 'price']]);
     const itemFields = new Map([['効果', 'effect'], ['使用回数', 'uses'], ['重量', 'weight'], ['価格', 'price']]);
@@ -4661,6 +4768,10 @@
       const outputField = currentFields?.get(fieldName);
       if (!outputField) continue;
       if (outputField === 'se' || outputField === 'hitEffect' || outputField === 'effect' || outputField === 'portraitFile') currentType[outputField] = value;
+      else if (outputField === 'special') {
+        const crossMatch = value.normalize('NFKC').match(/^十字\s*[,，、]\s*(\d+)$/);
+        if (crossMatch) currentType.special = { type: 'cross', damage: Number(crossMatch[1]) };
+      }
       else if (outputField === 'price') {
         const normalizedPrice = value.normalize('NFKC').trim();
         if (/^[ー―—-]$/.test(normalizedPrice)) currentType.price = null;
@@ -4763,7 +4874,7 @@
     return loadouts;
   }
 
-  function validateUnitLoadouts(loadouts, blockName, weaponOwners = new Map()) {
+  function validateUnitLoadouts(loadouts, blockName) {
     for (const [id, loadout] of loadouts) {
       const faction = id.startsWith('PC') ? 'PC' : 'EN';
       if (!loadout.imageFile) throw new Error(`${blockName}: ${id} に画像ファイル（例: ${id}s.png）がありません。`);
@@ -4774,10 +4885,6 @@
       if (!loadout.weaponTypeId) throw new Error(`${blockName}: ${id} に武器パラメータ Type_WEP_*** がありません。`);
       if (!weaponParameters.has(loadout.weaponTypeId)) {
         throw new Error(`${blockName}: ${id} が参照する ${loadout.weaponTypeId} は Data/Param_table.txt にありません。`);
-      }
-      const weaponOwner = weaponOwners.get(loadout.weaponTypeId);
-      if (faction === 'PC' && weaponOwner && weaponOwner !== id) {
-        throw new Error(`${blockName}: ${id} に設定された ${loadout.weaponTypeId} は ${weaponOwner} 用です。`);
       }
       if (loadout.armorTypeId && !armorParameters.has(loadout.armorTypeId)) {
         throw new Error(`${blockName}: ${id} が参照する ${loadout.armorTypeId} は Data/Param_table.txt にありません。`);
@@ -5495,6 +5602,7 @@
 
       if (!isGameOver && currentSide === 'enemy') {
         try {
+          await playAutomatedPhaseBgm(phaseBgmFiles.npc);
           await runBattleTimeEvents('npc', sideTurnCounts.enemy);
           if (!isGameOver && !clearTransitioning && currentSide === 'enemy') await runNpcMovementGoals();
         } catch (error) {
@@ -5972,11 +6080,12 @@
     }
   }
 
-  async function tryAttackTarget(target) {
+  async function tryAttackTarget(target, aimTile = { x: cursor.x, y: cursor.y }) {
     if (!selectedUnit || rangeMode !== 'attack' || target.side === selectedUnit.side) return false;
     if (!canAttackUnitTarget(selectedUnit, target)) return false;
 
     const attacker = selectedUnit;
+    const attackCenter = { x: aimTile.x, y: aimTile.y };
     isCombatResolving = true;
     combatTarget = target;
     pendingMove = null;
@@ -6041,6 +6150,9 @@
         showAttackMessage(`${attacker.id} → ${target.id}：回避！`);
       }
 
+      if (hitMargin >= 1 && !isGameOver && !clearTransitioning) {
+        await applyCrossWeaponDamage(attacker, target, attackCenter);
+      }
       if (!isGameOver && !clearTransitioning) await runBattleUnitAttackAfterEvent(attacker, target);
       checkUnitCompletion(attacker);
       scrollToCursor();
@@ -6120,13 +6232,54 @@
     delete unit.hpDisplayOverride;
   }
 
-  function calculateDamage(attacker, target) {
+  async function applyCrossWeaponDamage(attacker, target, center) {
+    const special = weaponParameters.get(attacker.weaponTypeId)?.special;
+    if (special?.type !== 'cross') return;
+    const adjacentTiles = [
+      { x: center.x, y: center.y - 1 },
+      { x: center.x + 1, y: center.y },
+      { x: center.x, y: center.y + 1 },
+      { x: center.x - 1, y: center.y },
+    ];
+    const adjacentTargets = [...new Set(adjacentTiles.flatMap(({ x, y }) => units.filter((unit) => {
+      const footprint = getFootprintSize(unit);
+      return unit !== target && unit.side !== attacker.side &&
+        x >= unit.x && x < unit.x + footprint.width &&
+        y >= unit.y && y < unit.y + footprint.height;
+    })))];
+
+    for (const adjacent of adjacentTargets) {
+      if (!units.includes(adjacent)) continue;
+      const damage = calculateDamage(attacker, adjacent, special.damage);
+      const previousHp = adjacent.hp;
+      adjacent.hp = Math.max(0, adjacent.hp - damage.amount);
+      const defeated = adjacent.hp <= 0;
+      showAttackMessage(`${attacker.id} → ${adjacent.id}：炸裂弾 -${damage.amount}`, 1200);
+      await shakeUnit(adjacent);
+      await animateHpCountdown(adjacent, previousHp, adjacent.hp);
+      if (defeated) {
+        const explosionDone = startExplosion(adjacent);
+        const deathSeDone = playSe(adjacent.side === 'player' ? 'dead_pc.mp3' : 'dead_en.mp3');
+        try {
+          await runBattleDefeatEvent(adjacent);
+        } finally {
+          const index = units.indexOf(adjacent);
+          if (index >= 0) units.splice(index, 1);
+          await Promise.all([explosionDone, deathSeDone]);
+        }
+        await resolveBattleEndEvent();
+        if (isGameOver || clearTransitioning) return;
+      }
+    }
+  }
+
+  function calculateDamage(attacker, target, attackPower = attacker.attackPower ?? 0) {
     const damageRoll = Math.floor(Math.random() * 6) + 1;
     const damageBonus = damageRoll === 1 ? -1 : damageRoll === 6 ? 1 : 0;
     const armorCorrection = target.armorCorrection ??
       (target.armorTypeId ? armorParameters.get(target.armorTypeId)?.armorCorrection : 0) ?? 0;
     return {
-      amount: Math.max(0, (attacker.attackPower ?? 0) - armorCorrection + damageBonus),
+      amount: Math.max(0, attackPower - armorCorrection + damageBonus),
       critical: damageBonus === 1,
       damageRoll,
       damageBonus,
@@ -6399,7 +6552,28 @@
     rangeMode = null;
     moveConfirmCommand.hidden = true;
     emptyCommand.hidden = true;
-    animateUnitMove(selectedUnit, path);
+    const movingUnit = selectedUnit;
+    animateUnitMove(movingUnit, path, () => {
+      draw();
+      void runBattleMovementEvents().then(() => {
+        if (!units.includes(movingUnit)) {
+          if (pendingMove?.unit === movingUnit) pendingMove = null;
+          if (selectedUnit === movingUnit) selectedUnit = null;
+          rangeMode = null;
+          draw();
+          return;
+        }
+        if (isGameOver || clearTransitioning || currentSide !== 'player') return;
+        if (!enterAttackModeIfTargetInRange(movingUnit)) {
+          if (pendingMove?.unit === movingUnit && movingUnit.moveRemaining > 0) commitPendingMove();
+          else if (pendingMove?.unit === movingUnit) showMoveConfirmation(movingUnit);
+          else checkUnitCompletion(movingUnit);
+        }
+      }).catch((error) => {
+        console.error('移動イベントを実行できませんでした。', error);
+        showAttackMessage(`移動イベントエラー: ${error.message || error}`, 15000);
+      });
+    });
     scrollToCursor();
   }
 
