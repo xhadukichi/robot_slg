@@ -248,26 +248,19 @@ body {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  align-self: start;
+  padding-top: 14px;
 }
 .story-window .story-portrait { grid-column: 1; grid-row: 1; }
 .story-window.with-portrait { box-sizing: border-box; padding: 8px clamp(16px, 3vw, 36px) 6px; }
 .intro-event.custom-macro-message .story-window.with-portrait { padding: 8px clamp(16px, 3vw, 36px) 6px; }
-.story-window.with-portrait .battle-message-content {
-  display: flex;
-  grid-column: 2;
-  grid-row: 1;
-  min-width: 0;
-  flex-direction: column;
-  align-self: start;
-  padding-top: 14px;
-}
 .story-window.with-portrait .story-portrait {
   grid-column: 1;
   grid-row: 1;
   align-self: start;
   justify-self: start;
 }
-.story-window.with-portrait .story-speaker:not(:empty) {
+.story-window .story-speaker:not(:empty) {
   align-self: flex-start;
   justify-self: start;
   margin: 0 0 8px;
@@ -957,8 +950,8 @@ canvas:focus-visible { box-shadow: inset 0 0 0 3px #e3cb75; }
   }
   .battle-message-panel .story-window { padding-top: 4px; padding-bottom: 4px; }
   .battle-message-panel .story-portrait { height: min(110px, 26dvh); }
-  .battle-message-panel .story-window.with-portrait .battle-message-content { padding-top: 4px; }
-  .battle-message-panel .story-window.with-portrait .story-speaker:not(:empty) { margin-bottom: 4px; }
+  .battle-message-panel .story-window .battle-message-content { padding-top: 4px; }
+  .battle-message-panel .story-window .story-speaker:not(:empty) { margin-bottom: 4px; }
   .battle-message-panel .story-text { line-height: 1.45; }
   .touch-controls { grid-row: 6; }
   .status { grid-row: 7; min-height: 0; padding: 2px 4px 0; font-size: 10px; }
