@@ -186,8 +186,6 @@ body {
 .battle-message-panel .story-portrait { display: block; width: var(--portrait-width); height: 136px; flex: 0 0 var(--portrait-width); object-fit: contain; object-position: center bottom; transform: translateY(7px); }
 .battle-message-panel .story-portrait[hidden] { display: none; }
 .story-window.system-message:not(.with-portrait) .battle-message-content { margin-left: calc(var(--portrait-width, 120px) + var(--portrait-gap, 40px)); }
-.intro-event:not(.battle-event):not(.custom-macro-message) .story-window:not(.with-portrait) .battle-message-layout,
-.intro-event:not(.battle-event):not(.custom-macro-message) .story-window:not(.with-portrait) .battle-message-content { display: contents; }
 .intro-event.custom-macro-message { --portrait-width: 120px; --portrait-gap: 40px; }
 .battle-message-panel.inter-story-panel {
   position: fixed;
@@ -233,6 +231,25 @@ body {
   column-gap: var(--portrait-gap, 40px);
   align-items: stretch;
 }
+.story-window .battle-message-layout {
+  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: var(--portrait-width, 120px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  column-gap: var(--portrait-gap, 40px);
+  align-items: stretch;
+}
+.story-window .battle-message-content {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.story-window .story-portrait { grid-column: 1; grid-row: 1; }
 .story-window.with-portrait { box-sizing: border-box; padding: 8px clamp(16px, 3vw, 36px) 6px; }
 .intro-event.custom-macro-message .story-window.with-portrait { padding: 8px clamp(16px, 3vw, 36px) 6px; }
 .story-window.with-portrait .battle-message-content {
